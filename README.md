@@ -1,5 +1,8 @@
 # Fine-Tuning Qwen2.5-1.5B para Recomendación de Ropa
 
+**¿De qué trata este proyecto?**
+Este sistema funciona como el cerebro de un asistente de moda: lee lo que una persona pide con sus propias palabras (como "quiero algo bien ancho y relajado para el frío") y extrae automáticamente las características exactas de la ropa (clima, estilo, ajuste) para que una tienda o aplicación pueda recomendarle las mejores prendas sin que el usuario tenga que pelear con filtros manuales (Se integrará en el futuro con los siguientes módulos de nuestro proyecto, los cuales recibirán estas categorías y realizaran el proceso de selección en la base de datos de ropa que se este usando).
+
 ## Modelo Base y Familia
 **Modelo elegido:** `Qwen/Qwen2.5-1.5B-Instruct` (Familia Qwen).  
 **Justificación:** Se seleccionó esta familia por su excelente capacidad multilingüe (especialmente para procesar español natural con abreviaciones comunes) y su fuerte rendimiento en el seguimiento de instrucciones estructuradas, lo que permite extraer atributos de forma precisa manteniendo un costo computacional eficiente (Algo que se adapta a nuestro contexto de enfoque a la experiencia de usuario).
