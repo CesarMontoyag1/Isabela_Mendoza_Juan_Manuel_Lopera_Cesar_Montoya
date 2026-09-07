@@ -1,0 +1,86 @@
+[
+  {
+    "id": "eval_01",
+    "tipo": "estandar",
+    "input": "Buenas, me voy a una boda y quiero verme elegante pero clásico, con corte holgado y tonos neutros.",
+    "expected_response": {"estilo": "Clasico", "fit": "holgado", "ocasion": "boda", "paleta": "neutros"},
+    "criterion": "El JSON debe contener exactamente los 4 campos mencionados (estilo=Clasico, fit=holgado, ocasion=boda, paleta=neutros) y NINGUNO extra. Se penaliza inventar clima, agregar valores no expresados, u omitir alguno de los 4 campos."
+  },
+  {
+    "id": "eval_02",
+    "tipo": "estandar",
+    "input": "Quiubo parce, necesito ropa abrigada para el trabajo, hace un frío berraco, y me gustan las cosas bien pegas al cuerpo en colores oscuros.",
+    "expected_response": {"clima": "frio", "fit": "ajustado", "ocasion": "trabajo", "paleta": "oscuros"},
+    "criterion": "Debe capturar clima=frio, fit=ajustado (derivar 'pegas al cuerpo' como ajustado, NO oversized/holgado), ocasion=trabajo y paleta=oscuros. No debe inferir un estilo (estilo) que nunca se menciona y no se puede afirmar con seguridad. La respuesta correcta omite 'estilo'."
+  },
+  {
+    "id": "eval_03",
+    "tipo": "estandar",
+    "input": "Hola, ando buscando pinta urbana, oversized, para salir a trotar estos días que está templado, todo de un solo color.",
+    "expected_response": {"estilo": "Urbano", "fit": "oversized", "ocasion": "deporte", "clima": "templado", "paleta": "monocromatico"},
+    "criterion": "Debe combinar estilo=Urbano (no Deportivo solo porque menciona trotar: se describe EXPLICITAMENTE como 'pinta urbana'), fit=oversized, ocasion=deporte (se infiere por 'trotar'), clima=templado y paleta=monocromatico ('todo de un solo color'). Es un caso de cruce estilo-ocasión: no puede confundir el estilo con la actividad."
+  },
+  {
+    "id": "eval_04",
+    "tipo": "estandar",
+    "input": "Hola parcero, voy de viaje a tierra caliente y quiero algo fresco, regular, con colores vivos.",
+    "expected_response": {"clima": "calido", "ocasion": "viaje", "fit": "regular", "paleta": "colores_vivos"},
+    "criterion": "Debe extraer clima=calido ('tierra caliente'), ocasion=viaje, fit=regular y paleta=colores_vivos. No debe inventar un estilo, ya que 'fresco' describe el fit/clima y no un estilo de moda. Omite el campo 'estilo'."
+  },
+  {
+    "id": "eval_05",
+    "tipo": "estandar",
+    "input": "Necesito un look formal minimalista, bien limpio, para la oficina, en tonos pastel.",
+    "expected_response": {"estilo": "Minimalista", "ocasion": "trabajo", "paleta": "pasteles"},
+    "criterion": "Debe elegir UN estilo entre Formal y Minimalista. Como el usuario explicita 'minimalista', la respuesta aceptable prioriza estilo=Minimalista (el adjetivo de moda mencionado), y captura ocasion=trabajo y paleta=pasteles. No debe inventar clima ni fit. Se acepta estilo=Minimalista; si responde 'Formal' ante la mención de 'look formal' es un error de interpretación, aunque ocasion y paleta estén bien."
+  },
+  {
+    "id": "eval_06",
+    "tipo": "ambigua",
+    "input": "Oye, ¿me pasas algo cómodo y lindo para el finde? No me importa mucho el color.",
+    "expected_response": {"ocasion": "fin_de_semana"},
+    "criterion": "Caso AMBIGUO: 'cómodo' y 'lindo' no mapean con seguridad a ningún valor de la ontología ('cómodo' puede ser holgado u oversized pero no es concluyente; 'lindo' no es un estilo válido) y 'no me importa el color' indica que NO hay paleta preferida. La respuesta correcta es SOLO ocasion=fin_de_semana y NO inventar estilo, fit, clima ni paleta. Un modelo que rellena valores no mencionados comete alucinación y falla."
+  },
+  {
+    "id": "eval_07",
+    "tipo": "trampa_out_of_domain",
+    "input": "Hola, ¿cuánto vale el envío a Medellín y me sirve mi talla 32?",
+    "expected_response": {},
+    "criterion": "Caso OUT-OF-DOMAIN: la consulta es sobre envíos y tallas numéricas (32), que NO pertenecen a la ontología de 5 campos. La respuesta correcta es un JSON VACÍO ({}), sin forzar ningún campo inventado, o una indicación explícita de que la consulta está fuera del alcance. NUNCA debe inventar estilo/fit/paleta por la palabra 'talla'. Un modelo que devuelve fit basándose en 'talla 32' genera alucinación."
+  },
+  {
+    "id": "eval_08",
+    "tipo": "trampa_out_of_domain",
+    "input": "Quiero comprar con una chaqueta de cuero mediana, presupuesto de 200 mil, ¿tienen descuentos esta semana?",
+    "expected_response": {},
+    "criterion": "Caso OUT-OF-DOMAIN: menciona presupuesto ('200 mil') y acciones comerciales ('descuentos') que no son atributos de estilo. La respuesta correcta es JSON vacío o aviso de fuera de alcance. 'Mediana' es una talla, no un valor válido de 'fit' de la ontología (holgado/regular/ajustado/oversized), por lo que NO debe traducirse a ningún fit. No debe inventar paleta ni estilo."
+  },
+  {
+    "id": "eval_09",
+    "tipo": "ambigua",
+    "input": "Buenas, quiero algo como para el gimnasio pero que se vea bien puesto, no tan deportivo, más de calle.",
+    "expected_response": {"ocasion": "deporte", "estilo": "Urbano"},
+    "criterion": "Caso AMBIGUO y de cruce: el usuario se contradice ('para el gimnasio' sugiere Deportivo, pero 'no tan deportivo, más de calle' apunta a Urbano). La interpretación correcta prioriza la intención corregida del usuario: ocasion=deporte + estilo=Urbano (no Deportivo). No debe inventar clima, paleta ni fit. Un modelo que se queda con 'deportivo' literal por la palabra 'gimnasio' falla la intención."
+  },
+  {
+    "id": "eval_10",
+    "tipo": "estandar",
+    "input": "Hola! Necesito ropa muy holgada y ancha para el frío, estilo bohemio, colores vivos.",
+    "expected_response": {"fit": "oversized", "clima": "frio", "estilo": "Bohemio", "paleta": "colores_vivos"},
+    "criterion": "Caso de CONFUSIÓN fit: 'muy holgada y ancha' se interpreta como oversized (no holgado) dado el énfasis de anchura extrema; la respuesta aceptable mapea fit=oversized, clima=frio, estilo=Bohemio y paleta=colores_vivos. No debe inventar ocasion. Se penaliza la confusión clásica oversize vs holgado escogiendo 'holgado' cuando el texto enfatiza 'super ancha'."
+  },
+  {
+    "id": "eval_11",
+    "tipo": "estandar",
+    "input": "Parce, para la fiesta de gala este fin de semana, algo elegante y sobrio, todo negro.",
+    "expected_response": {"ocasion": "evento_formal", "estilo": "Formal", "paleta": "oscuros"},
+    "criterion": "Debe interpretar 'fiesta de gala' como ocasion=evento_formal (no fin_de_semana, aunque ocurra ese día), estilo=Formal (por 'elegante y sobrio') y paleta=oscuros ('todo negro'). Es un caso donde dos ocasiones compiten (fin_de_semana vs evento_formal) y debe ganar la más específica/más formal. No debe inventar clima ni fit."
+  },
+  {
+    "id": "eval_12",
+    "tipo": "estandar",
+    "input": "Hola, un uniforme deportivo para el gym, bien ajustado, de colores neutros.",
+    "expected_response": {"estilo": "Deportivo", "ocasion": "deporte", "fit": "ajustado", "paleta": "neutros"},
+    "criterion": "Debe extraer estilo=Deportivo (aquí sí, pues el usuario habla de uniforme deportivo y no de calle), ocasion=deporte, fit=ajustado y paleta=neutros. Se contrasta con eval_03/eval_09 donde el usuario rechazaba lo deportivo: este caso refuerza que 'deportivo' sí corresponde cuando la intención es deportiva explícita. No debe inventar clima."
+  }
+]
