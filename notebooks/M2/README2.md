@@ -82,6 +82,8 @@ Aquí el nuevo juez 7B demostró su valor: mientras el viejo juez M1 le daba 5/5
 
 El baseline falla sistemáticamente porque **maximiza el JSON plausible completo, no la fidelidad al texto**. No sabe abstenerse ni omitir campos. 
 
+Otro problema identificado es la existencia de único juez LLM, reutilizado y complaciente. El juez (M1 afinado) valora la plausibilidad estilística, no la fidelidad campo a campo, por eso D2 (4.5) y D1 (8.3) difieren tanto.
+
 **Mejoras concretas para las siguientes fases:**
 
 1. **Fine-tuning con ejemplos negativos:** El M1 (LoRA) debe entrenarse con datos donde el JSON esperado solo tenga 1 o 2 llaves, para romper el *prior* de "responder siempre los 5 campos".
