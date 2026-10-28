@@ -1,0 +1,5 @@
+sistema,D1_citacion_outfits,D2_juez_medio,D3_cumplimiento,latencia_mediana_s
+1. Linea base M2 (sin RAG),0.167,4.75,0.75,4.654
+2. RAG ingenuo,0.917,4.333,0.75,8.291
+3. RAG avanzado (3 tec),0.833,4.667,0.833,13.811
+4. Sistema final (tool),0.75,4.0,0.667,12.225
