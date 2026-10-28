@@ -102,9 +102,9 @@ code(r'''# --- Dependencias (Colab gratuito). Ejecuta esta celda UNA vez por ses
 # En Colab, quita el '#' de la línea de abajo y ejecútala (tarda 1-2 min):
 # !pip -q install chromadb sentence-transformers rank-bm25 transformers accelerate peft datasets scikit-learn pandas
 #
-# RAGAS (sección 7) con juez local. Fija versiones compatibles para evitar el error
-# 'No module named langchain_community.chat_models.vertexai' de las versiones nuevas:
-# !pip -q install "ragas==0.1.21" "langchain==0.2.16" "langchain-community==0.2.16" "langchain-huggingface==0.0.3"
+# Nota: la sección 7 (RAGAS) usa una IMPLEMENTACIÓN PROPIA de las 4 métricas con el Qwen local,
+# NO la librería 'ragas' (que da conflictos de dependencias irresolubles en Colab). No requiere
+# instalar nada extra.
 print('Dependencias: en Colab, descomenta la línea de pip y ejecútala una vez.')''')
 
 code(r'''# --- Localización de los archivos del corpus ---
@@ -780,9 +780,9 @@ tabla_ablacion''')
 md(r'''## 7. RAGAS — las 4 métricas (sistema final y ingenuo)
 
 **faithfulness, answer relevancy, context precision, context recall**. Cada caso aporta pregunta,
-respuesta, contexto recuperado y referencia. **Juez por defecto: Qwen2.5 local** (sin claves); con
-`GEMINI_API_KEY` se puede usar Gemini. Lectura: *context recall* bajo → recuperación; *faithfulness*
-bajo con buen contexto → generación.''')
+respuesta, contexto recuperado y referencia. **Juez: Qwen2.5 local** (el mismo generador), con una
+**implementación propia** de las métricas (ver nota abajo). Lectura: *context recall* bajo →
+problema de **recuperación**; *faithfulness* bajo con buen contexto → problema de **generación**.''')
 
 code(r'''# --- Datos para RAGAS ---
 def datos_ragas(nombre):
@@ -802,67 +802,90 @@ reconfiguramos para que el **mismo Qwen2.5 ya cargado** haga de juez y el **mism
 los embeddings. Así RAGAS corre 100% local en Colab gratuito. (Para usar Gemini en su lugar, hay una
 celda alternativa comentada al final.)''')
 
-code(r'''# --- Envolver el Qwen local y el e5 local para que RAGAS los use como juez ---
-# Requiere: langchain-core, langchain-huggingface (se instalan con ragas).
-# !pip -q install langchain-huggingface langchain-core
+md(r'''**Implementación propia de RAGAS (con nuestro propio juez), sin la librería `ragas`.**
 
-def construir_juez_local():
-    """Devuelve (llm_ragas, emb_ragas) basados en el Qwen y el e5 YA cargados."""
-    from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
-    from transformers import pipeline
-    from ragas.llms import LangchainLLMWrapper
-    from ragas.embeddings import LangchainEmbeddingsWrapper
+La librería `ragas` genera conflictos de dependencias irresolubles en Colab (langchain-core/
+community vs numpy; `metaclass conflict`). El enunciado permite explícitamente *"la implementación
+del laboratorio de la sesión 10 (con su propio juez)"*, así que calculamos las **4 métricas a mano**
+usando el **Qwen2.5 local** (juez) y el **embedder e5 local** ya cargados. Cero dependencias nuevas,
+100% reproducible y sin claves de pago.
 
-    # El generador Qwen ya cargado (gen_model/gen_tok) como pipeline de texto.
-    pipe = pipeline('text-generation', model=gen_model, tokenizer=gen_tok,
-                    max_new_tokens=256, do_sample=False, return_full_text=False)
-    llm = LangchainLLMWrapper(HuggingFacePipeline(pipeline=pipe))
-    # Embeddings e5 locales (mismo modelo del índice).
-    emb = LangchainEmbeddingsWrapper(HuggingFaceEmbeddings(model_name=EMBED_MODEL))
-    return llm, emb
+- **faithfulness**: de las afirmaciones de la respuesta, ¿cuántas se sostienen en el contexto? (juez)
+- **answer relevancy**: similitud (e5) entre la pregunta y la respuesta.
+- **context precision**: de los chunks recuperados, ¿cuántos son relevantes a la pregunta? (juez)
+- **context recall**: ¿el contexto cubre lo que dice la referencia? (juez)''')
 
-print('Juez RAGAS: Qwen2.5 local + e5 local (sin clave de pago).')''')
+code(r'''# --- Implementación propia de las 4 métricas RAGAS (juez = Qwen local, emb = e5 local) ---
+def _si_no(pregunta_juez):
+    """Pregunta de sí/no al juez local. Devuelve 1.0 (sí) / 0.0 (no)."""
+    out = generar('Responde SOLO con "si" o "no".', pregunta_juez, max_new_tokens=5).strip().lower()
+    return 1.0 if out.startswith('s') or 'yes' in out or 'si' in out[:4] else 0.0
 
-code(r'''# --- Calcular RAGAS con el juez local ---
-def correr_ragas(nombre, llm, emb):
-    try:
-        from datasets import Dataset
-        from ragas import evaluate
-        from ragas.metrics import faithfulness, answer_relevancy, context_precision, context_recall
-    except Exception as ex:
-        print('RAGAS no disponible:', ex); return None
-    ds = Dataset.from_dict(datos_ragas(nombre))
-    metricas = [faithfulness, answer_relevancy, context_precision, context_recall]
-    try:
-        # Juez y embeddings locales -> sin OpenAI, sin clave de pago.
-        return evaluate(ds, metrics=metricas, llm=llm, embeddings=emb, raise_exceptions=False)
-    except Exception as ex:
-        print('RAGAS falló para', nombre, '->', ex)
-        return None
+def _afirmaciones(respuesta):
+    """Parte la respuesta en afirmaciones simples (por oración)."""
+    frases = re.split(r'(?<=[.!?])\s+', (respuesta or '').strip())
+    return [f for f in frases if len(f.split()) >= 3][:6]  # máx 6 para acotar costo
 
-try:
-    _llm_ragas, _emb_ragas = construir_juez_local()
-    ragas_ingenuo = correr_ragas('2. RAG ingenuo', _llm_ragas, _emb_ragas)
-    ragas_final   = correr_ragas('4. Sistema final (tool)', _llm_ragas, _emb_ragas)
-except Exception as ex:
-    print('No se pudo construir el juez local de RAGAS:', ex)
-    ragas_ingenuo = ragas_final = None
+def ragas_faithfulness(answer, contexts):
+    afs = _afirmaciones(answer)
+    if not afs:
+        return np.nan
+    ctx = '\n'.join(contexts)[:3000]
+    oks = []
+    for a in afs:
+        q = ('CONTEXTO:\n' + ctx + '\n\nAFIRMACION: "' + a +
+             '"\n\n¿La afirmación está respaldada por el contexto?')
+        oks.append(_si_no(q))
+    return float(np.mean(oks))
 
+def ragas_answer_relevancy(question, answer):
+    e = embedder.encode(['query: ' + question, 'passage: ' + (answer or '')],
+                        normalize_embeddings=True)
+    return float(np.dot(e[0], e[1]))
+
+def ragas_context_precision(question, contexts):
+    if not contexts:
+        return np.nan
+    rel = []
+    for c in contexts[:5]:
+        q = ('PREGUNTA: ' + question + '\n\nFRAGMENTO:\n' + c[:1200] +
+             '\n\n¿El fragmento es útil/relevante para responder la pregunta?')
+        rel.append(_si_no(q))
+    # precision = relevantes en las primeras posiciones (promedio simple de utilidad)
+    return float(np.mean(rel))
+
+def ragas_context_recall(reference, contexts):
+    if not contexts:
+        return np.nan
+    ctx = '\n'.join(contexts)[:3000]
+    q = ('REFERENCIA (lo que debería cubrirse):\n' + reference[:1200] +
+         '\n\nCONTEXTO RECUPERADO:\n' + ctx +
+         '\n\n¿El contexto recuperado cubre la información de la referencia?')
+    return _si_no(q)
+
+print('Métricas RAGAS propias definidas (juez Qwen local + e5).')''')
+
+code(r'''# --- Correr las 4 métricas sobre un sistema ---
+def correr_ragas(nombre):
+    d = datos_ragas(nombre)
+    faith, arel, cprec, crec = [], [], [], []
+    for q, a, ctx, gt in zip(d['question'], d['answer'], d['contexts'], d['ground_truth']):
+        faith.append(ragas_faithfulness(a, ctx))
+        arel.append(ragas_answer_relevancy(q, a))
+        cprec.append(ragas_context_precision(q, ctx))
+        crec.append(ragas_context_recall(gt, ctx))
+    return {
+        'sistema': nombre,
+        'faithfulness':      round(float(np.nanmean(faith)), 3),
+        'answer_relevancy':  round(float(np.nanmean(arel)), 3),
+        'context_precision': round(float(np.nanmean(cprec)), 3),
+        'context_recall':    round(float(np.nanmean(crec)), 3),
+    }
+
+ragas_ingenuo = correr_ragas('2. RAG ingenuo')
 print('RAGAS ingenuo:', ragas_ingenuo)
+ragas_final = correr_ragas('4. Sistema final (tool)')
 print('RAGAS final  :', ragas_final)''')
-
-code(r'''# --- ALTERNATIVA con Gemini (opcional, requiere GEMINI_API_KEY) ---
-# No es necesaria: el juez local de arriba ya cumple "sin claves de pago".
-# Si prefieres Gemini (más rápido), descomenta y vuelve a correr correr_ragas con estos:
-# !pip -q install langchain-google-genai
-# from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-# from ragas.llms import LangchainLLMWrapper
-# from ragas.embeddings import LangchainEmbeddingsWrapper
-# _llm_g = LangchainLLMWrapper(ChatGoogleGenerativeAI(
-#     model='gemini-3.5-flash-lite', google_api_key=os.environ['GEMINI_API_KEY']))
-# _emb_g = LangchainEmbeddingsWrapper(GoogleGenerativeAIEmbeddings(model='models/embedding-001'))
-# ragas_final = correr_ragas('4. Sistema final (tool)', _llm_g, _emb_g)
-print('Alternativa Gemini: ver comentarios (opcional).')''')
 
 md(r'''## 8. Guardar resultados y evidencia de la herramienta''')
 
@@ -871,20 +894,9 @@ tabla.to_csv(OUT_SCORECARD, index=False, encoding='utf-8')
 tabla_ablacion.to_csv(OUT_SCORECARD.replace('.csv', '_ablacion.csv'), index=False, encoding='utf-8')
 print('Guardado:', OUT_SCORECARD)
 
-def ragas_a_df(res, nombre):
-    cols = {'faithfulness': None, 'answer_relevancy': None,
-            'context_precision': None, 'context_recall': None}
-    if res is not None:
-        try:
-            d = res.to_pandas().mean(numeric_only=True).to_dict()
-            cols.update({k: round(float(v), 3) for k, v in d.items() if k in cols})
-        except Exception:
-            pass
-    cols['sistema'] = nombre
-    return pd.DataFrame([cols])
-
-ragas_df = pd.concat([ragas_a_df(ragas_ingenuo, 'RAG ingenuo'),
-                      ragas_a_df(ragas_final, 'Sistema final')], ignore_index=True)
+# ragas_ingenuo / ragas_final ya son dicts con las 4 métricas (implementación propia).
+ragas_df = pd.DataFrame([ragas_ingenuo, ragas_final])[
+    ['sistema', 'faithfulness', 'answer_relevancy', 'context_precision', 'context_recall']]
 ragas_df.to_csv(OUT_RAGAS, index=False, encoding='utf-8')
 print('Guardado:', OUT_RAGAS)
 ragas_df''')
