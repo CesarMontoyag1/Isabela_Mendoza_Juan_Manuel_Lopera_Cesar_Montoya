@@ -98,10 +98,39 @@ Las mide con **el harness del Módulo 2** (3 dimensiones, re-instanciadas para Q
 
 md(r'''## 0. Configuración y dependencias''')
 
-code(r'''# --- Dependencias (Colab gratuito). Descomenta la primera vez en Colab. ---
-# !pip -q install chromadb sentence-transformers rank-bm25 transformers accelerate \
-#     peft ragas datasets scikit-learn pandas
-print('Si estás en Colab, descomenta la línea de arriba y ejecútala una vez.')''')
+code(r'''# --- Dependencias (Colab gratuito). Ejecuta esta celda UNA vez por sesión. ---
+# En Colab, quita el '#' de la línea de abajo y ejecútala (tarda 1-2 min):
+# !pip -q install chromadb sentence-transformers rank-bm25 transformers accelerate peft datasets scikit-learn pandas
+#
+# RAGAS (sección 7) con juez local; es más pesado, instálalo solo para esa sección:
+# !pip -q install ragas langchain-huggingface langchain-core
+print('Dependencias: en Colab, descomenta la línea de pip y ejecútala una vez.')''')
+
+code(r'''# --- Localización de los archivos del corpus ---
+# OPCIÓN A (recomendada): clonar el repo en Colab y usar sus rutas.
+#   En Colab, descomenta estas dos líneas y ejecútalas una vez:
+#   !git clone -b cesar https://github.com/CesarMontoyag1/Isabela_Mendoza_Juan_Manuel_Lopera_Cesar_Montoya.git
+#   %cd Isabela_Mendoza_Juan_Manuel_Lopera_Cesar_Montoya
+# OPCIÓN B: montar Google Drive y copiar los CSV a notebooks/M3/.
+#   from google.colab import drive; drive.mount('/content/drive')
+#
+# Esta celda detecta dónde están los CSV y ajusta M3_DIR automáticamente.
+import os, glob
+candidatos = ['notebooks/M3', '.', '/content', '/content/drive/MyDrive']
+M3_DIR = None
+for base in candidatos:
+    if os.path.exists(os.path.join(base, 'corpus_look_es.csv')):
+        M3_DIR = base; break
+if M3_DIR is None:
+    hits = glob.glob('/content/**/corpus_look_es.csv', recursive=True) + \
+           glob.glob('**/corpus_look_es.csv', recursive=True)
+    M3_DIR = os.path.dirname(hits[0]) if hits else 'notebooks/M3'
+print('M3_DIR =', M3_DIR)
+assert os.path.exists(os.path.join(M3_DIR, 'corpus_look_es.csv')), \
+    'No encuentro corpus_look_es.csv. Sube los 3 archivos a esa carpeta (ver celda).'
+print('Archivos requeridos presentes:',
+      all(os.path.exists(os.path.join(M3_DIR, f)) for f in
+          ['corpus_look_es.csv', 'corpus_label_es.csv', 'eval_set_rag.json']))''')
 
 code(r'''# --- Reproducibilidad: semillas y versiones fijas ---
 import os, random, json, time, re, math, collections
@@ -124,7 +153,11 @@ RERANK_MODEL = 'cross-encoder/mmarco-mMiniLMv2-L12-H384-v1'
 GEN_MODEL    = 'Qwen/Qwen2.5-1.5B-Instruct'
 JUDGE_MODEL  = 'Qwen/Qwen2.5-1.5B-Instruct'
 
-M3_DIR     = 'notebooks/M3' if os.path.isdir('notebooks/M3') else '.'
+# M3_DIR lo fijó la celda de localización anterior. Si corres suelto, usa el default:
+try:
+    M3_DIR
+except NameError:
+    M3_DIR = 'notebooks/M3' if os.path.isdir('notebooks/M3') else '.'
 LOOK_CSV   = os.path.join(M3_DIR, 'corpus_look_es.csv')
 LABEL_CSV  = os.path.join(M3_DIR, 'corpus_label_es.csv')
 EVAL_PATH  = os.path.join(M3_DIR, 'eval_set_rag.json')
@@ -665,8 +698,34 @@ def datos_ragas(nombre):
 USAR_GEMINI_JUEZ = bool(os.environ.get('GEMINI_API_KEY'))
 print('Juez RAGAS:', 'Gemini' if USAR_GEMINI_JUEZ else 'LLM local Qwen (sin clave)')''')
 
-code(r'''# --- Calcular RAGAS (requiere configurar el juez; ver celda siguiente) ---
-def correr_ragas(nombre):
+md(r'''**Juez de RAGAS = Qwen2.5 local (sin clave de pago).** RAGAS por defecto usa OpenAI; aquí lo
+reconfiguramos para que el **mismo Qwen2.5 ya cargado** haga de juez y el **mismo embedder e5** haga
+los embeddings. Así RAGAS corre 100% local en Colab gratuito. (Para usar Gemini en su lugar, hay una
+celda alternativa comentada al final.)''')
+
+code(r'''# --- Envolver el Qwen local y el e5 local para que RAGAS los use como juez ---
+# Requiere: langchain-core, langchain-huggingface (se instalan con ragas).
+# !pip -q install langchain-huggingface langchain-core
+
+def construir_juez_local():
+    """Devuelve (llm_ragas, emb_ragas) basados en el Qwen y el e5 YA cargados."""
+    from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
+    from transformers import pipeline
+    from ragas.llms import LangchainLLMWrapper
+    from ragas.embeddings import LangchainEmbeddingsWrapper
+
+    # El generador Qwen ya cargado (gen_model/gen_tok) como pipeline de texto.
+    pipe = pipeline('text-generation', model=gen_model, tokenizer=gen_tok,
+                    max_new_tokens=256, do_sample=False, return_full_text=False)
+    llm = LangchainLLMWrapper(HuggingFacePipeline(pipeline=pipe))
+    # Embeddings e5 locales (mismo modelo del índice).
+    emb = LangchainEmbeddingsWrapper(HuggingFaceEmbeddings(model_name=EMBED_MODEL))
+    return llm, emb
+
+print('Juez RAGAS: Qwen2.5 local + e5 local (sin clave de pago).')''')
+
+code(r'''# --- Calcular RAGAS con el juez local ---
+def correr_ragas(nombre, llm, emb):
     try:
         from datasets import Dataset
         from ragas import evaluate
@@ -676,29 +735,35 @@ def correr_ragas(nombre):
     ds = Dataset.from_dict(datos_ragas(nombre))
     metricas = [faithfulness, answer_relevancy, context_precision, context_recall]
     try:
-        return evaluate(ds, metrics=metricas)
+        # Juez y embeddings locales -> sin OpenAI, sin clave de pago.
+        return evaluate(ds, metrics=metricas, llm=llm, embeddings=emb, raise_exceptions=False)
     except Exception as ex:
-        print('RAGAS requiere configurar el juez LLM. Detalle:', ex)
+        print('RAGAS falló para', nombre, '->', ex)
         return None
 
-ragas_final = correr_ragas('4. Sistema final (tool)')
-ragas_ingenuo = correr_ragas('2. RAG ingenuo')
-print('RAGAS final:', ragas_final)
-print('RAGAS ingenuo:', ragas_ingenuo)''')
+try:
+    _llm_ragas, _emb_ragas = construir_juez_local()
+    ragas_ingenuo = correr_ragas('2. RAG ingenuo', _llm_ragas, _emb_ragas)
+    ragas_final   = correr_ragas('4. Sistema final (tool)', _llm_ragas, _emb_ragas)
+except Exception as ex:
+    print('No se pudo construir el juez local de RAGAS:', ex)
+    ragas_ingenuo = ragas_final = None
 
-code(r'''# --- (Opcional) Juez de RAGAS sin OpenAI ---
-# RAGAS por defecto llama a OpenAI. Para 'sin claves de pago', configura un juez local o Gemini:
-#
-# Gemini (si tienes GEMINI_API_KEY):
-#   from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-#   llm = ChatGoogleGenerativeAI(model='gemini-3.5-flash-lite',
-#                                google_api_key=os.environ['GEMINI_API_KEY'])
-#   emb = GoogleGenerativeAIEmbeddings(model='models/embedding-001')
-#   res = evaluate(ds, metrics=[...], llm=llm, embeddings=emb)
-#
-# Local 100% sin clave: envolver el Qwen ya cargado en un HuggingFacePipeline (LangChain)
-# y pasarlo como llm=; usar el 'embedder' e5 como embeddings. Documentado en reporte.md.
-print('Config del juez RAGAS: ver comentarios de esta celda.')''')
+print('RAGAS ingenuo:', ragas_ingenuo)
+print('RAGAS final  :', ragas_final)''')
+
+code(r'''# --- ALTERNATIVA con Gemini (opcional, requiere GEMINI_API_KEY) ---
+# No es necesaria: el juez local de arriba ya cumple "sin claves de pago".
+# Si prefieres Gemini (más rápido), descomenta y vuelve a correr correr_ragas con estos:
+# !pip -q install langchain-google-genai
+# from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+# from ragas.llms import LangchainLLMWrapper
+# from ragas.embeddings import LangchainEmbeddingsWrapper
+# _llm_g = LangchainLLMWrapper(ChatGoogleGenerativeAI(
+#     model='gemini-3.5-flash-lite', google_api_key=os.environ['GEMINI_API_KEY']))
+# _emb_g = LangchainEmbeddingsWrapper(GoogleGenerativeAIEmbeddings(model='models/embedding-001'))
+# ragas_final = correr_ragas('4. Sistema final (tool)', _llm_g, _emb_g)
+print('Alternativa Gemini: ver comentarios (opcional).')''')
 
 md(r'''## 8. Guardar resultados y evidencia de la herramienta''')
 
