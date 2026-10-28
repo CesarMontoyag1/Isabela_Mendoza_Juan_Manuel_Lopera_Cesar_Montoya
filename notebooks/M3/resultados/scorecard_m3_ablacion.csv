@@ -1,0 +1,5 @@
+sistema,D1_citacion_outfits,D2_juez_medio,D3_cumplimiento,latencia_mediana_s
+final (hibrida+HyDE),0.833,4.667,0.833,13.893
+solo dense,0.917,4.333,0.75,8.393
+hibrida sin HyDE,0.833,4.667,0.75,8.319
+con reranking (descartado),0.833,4.583,0.667,13.272
