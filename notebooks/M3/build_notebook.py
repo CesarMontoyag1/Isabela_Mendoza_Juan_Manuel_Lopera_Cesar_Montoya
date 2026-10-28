@@ -102,8 +102,9 @@ code(r'''# --- Dependencias (Colab gratuito). Ejecuta esta celda UNA vez por ses
 # En Colab, quita el '#' de la línea de abajo y ejecútala (tarda 1-2 min):
 # !pip -q install chromadb sentence-transformers rank-bm25 transformers accelerate peft datasets scikit-learn pandas
 #
-# RAGAS (sección 7) con juez local; es más pesado, instálalo solo para esa sección:
-# !pip -q install ragas langchain-huggingface langchain-core
+# RAGAS (sección 7) con juez local. Fija versiones compatibles para evitar el error
+# 'No module named langchain_community.chat_models.vertexai' de las versiones nuevas:
+# !pip -q install "ragas==0.1.21" "langchain==0.2.16" "langchain-community==0.2.16" "langchain-huggingface==0.0.3"
 print('Dependencias: en Colab, descomenta la línea de pip y ejecútala una vez.')''')
 
 code(r'''# --- Localización de los archivos del corpus ---
@@ -316,21 +317,31 @@ print('Generador listo.')''')
 
 code(r'''# --- Prompt base COMPARTIDO por las 4 versiones (delta limpio) ---
 SYSTEM_PROMPT = (
-    'Eres un personal shopper de un e-commerce de moda. Respondes en español, breve y concreto. '
-    'SOLO puedes recomendar outfits que aparezcan en el CONTEXTO. Cita los outfits por su '
-    'identificador (por ejemplo, B_b12). Si el contexto NO contiene información para responder '
-    '(precios, envíos, tallas numéricas, políticas de la tienda), responde EXACTAMENTE con una '
-    'frase que empiece por: "No encuentro esa información en el catálogo" y no inventes datos.'
+    'Eres un personal shopper de un e-commerce de moda. Respondes en español, breve y concreto.\n'
+    'REGLA 1 (recomendar): si el CONTEXTO contiene outfits de ropa, SIEMPRE recomienda el o los '
+    'que mejor encajen con la petición y cítalos por su identificador (por ejemplo, B_b12). '
+    'El contexto son outfits de ropa; úsalos aunque no sean una coincidencia perfecta.\n'
+    'REGLA 2 (válvula de escape): usa la frase "No encuentro esa información en el catálogo" '
+    'ÚNICAMENTE cuando la pregunta NO es sobre recomendar ropa, sino sobre precios, envíos, '
+    'tallas numéricas (38, 40...) o políticas de la tienda (devoluciones). En esos casos no hay '
+    'outfit que recomendar.\n'
+    'NUNCA uses la válvula si la pregunta pide ropa y el contexto trae outfits. No inventes prendas '
+    'que no estén en el contexto.'
 )
 VALVULA = 'No encuentro esa información en el catálogo'
 
 def armar_prompt(pregunta, contextos):
     ctx = "\n\n".join(contextos) if contextos else '(sin resultados)'
+    hay_ctx = bool(contextos)
+    guia = ("El contexto SÍ trae outfits: recomiéndale al cliente el o los que mejor encajen y "
+            "cita sus identificadores."
+            if hay_ctx else
+            "No hay outfits en el contexto.")
     return ("CONTEXTO (outfits del catálogo):\n" + ctx +
             "\n\nPREGUNTA DEL CLIENTE: " + pregunta +
-            "\n\nRecomienda el o los outfits del contexto que mejor encajen y explica brevemente "
-            "por qué. Cita sus identificadores. Si el contexto no responde la pregunta, usa la "
-            "frase de válvula de escape.")''')
+            "\n\n" + guia +
+            " Explica en 1-2 frases por qué encaja. Solo usa la válvula de escape si la pregunta "
+            "es de precio, envío, talla numérica o políticas de la tienda.")''')
 
 code(r'''# --- Recuperación densa (base del RAG ingenuo) ---
 TOP_K = 5
@@ -427,8 +438,10 @@ def buscar_hyde(pregunta, pool=20):
     return rrf([densos, lexicos], top=pool)''')
 
 code(r'''# --- sistema_rag_avanzado: combina las 3 técnicas (misma firma) ---
-def sistema_rag_avanzado(pregunta, usar_hibrido=True, usar_rerank=True, usar_hyde=True):
-    """RAG avanzado. Flags para la ablación (quitar una técnica a la vez)."""
+def sistema_rag_avanzado(pregunta, usar_hibrido=True, usar_rerank=False, usar_hyde=True):
+    """RAG avanzado. Técnicas finales (por diagnóstico): híbrida + HyDE.
+    usar_rerank=False por defecto porque la ablación mostró que el reranking BAJA D3.
+    Los flags permiten reproducir la ablación (p. ej. usar_rerank=True para ver el efecto)."""
     t0 = time.time()
     candidatos, pool = [], 20
     if usar_hyde:
@@ -500,12 +513,63 @@ def parse_json_tolerante(texto):
     except Exception:
         return {}
 
-def decidir_filtro(pregunta):
-    """Router agéntico: el modelo propone args; parseo tolerante + validación. Máx 1 llamada."""
+# Diccionario de sinónimos -> valor canónico del esquema. El router mapea las
+# palabras de la consulta del cliente (lenguaje natural) a los valores exactos
+# que Chroma espera. Esto hace el router determinista y reproducible.
+SINONIMOS = {
+    'gender': {
+        'De hombre': ['hombre', 'masculino', 'caballero', 'hombres', 'para él', 'para el'],
+        'De mujer':  ['mujer', 'femenino', 'dama', 'mujeres', 'para ella', 'chica', 'vestido'],
+    },
+    'season': {
+        'Invierno':  ['invierno', 'frío', 'frio', 'abrigado', 'nieve'],
+        'Verano':    ['verano', 'calor', 'caluroso', 'playa', 'fresco'],
+        'Otoño':     ['otoño', 'otonio'],
+        'Primavera': ['primavera'],
+    },
+    'occasion': {
+        'Trabajo':         ['trabajo', 'oficina', 'ejecutiv', 'laboral', 'reunión', 'reunion'],
+        'Eventos sociales':['evento', 'social', 'formal', 'boda', 'gala', 'fiesta', 'ceremonia'],
+        'Viaje':           ['viaje', 'viajar', 'turismo', 'vacacion'],
+        'Escuela':         ['escuela', 'colegio', 'universidad', 'clase', 'estudio'],
+        'Hogar':           ['casa', 'hogar', 'estar en casa', 'cómodo en casa'],
+        'Deporte':         ['deporte', 'gimnasio', 'gym', 'entrenar', 'correr', 'running'],
+    },
+}
+
+def router_determinista(pregunta):
+    """Detecta género/estación/ocasión por palabras clave. Reproducible, sin LLM."""
+    q = pregunta.lower()
+    args = {}
+    for campo, mapa in SINONIMOS.items():
+        for canonico, claves in mapa.items():
+            if any(k in q for k in claves):
+                args[campo] = canonico
+                break  # primer match por campo
+    return args
+
+def decidir_filtro(pregunta, usar_llm_respaldo=True):
+    """Router agéntico (la 'herramienta'). Máx 1 llamada de razonamiento.
+    1) Mapeo determinista por palabras clave (principal, reproducible).
+    2) Respaldo: si el determinista no detecta nada, el LLM propone un JSON
+       (parseo tolerante + validación contra el enum). Es el paso agéntico.
+    """
+    args = router_determinista(pregunta)
+    if args or not usar_llm_respaldo:
+        return args
+    # Respaldo LLM (tope: 1 sola llamada)
     propuesta = generar(ROUTER_SYS, "Consulta: " + pregunta + "\nJSON:", max_new_tokens=80)
-    args = parse_json_tolerante(propuesta)
-    return {c: v for c, v in args.items()
-            if c in VALID and isinstance(v, str) and v in VALID[c]}''')
+    crudo = parse_json_tolerante(propuesta)
+    # normalizar lo que proponga el LLM contra el enum (tolerante)
+    for c, v in crudo.items():
+        if c in VALID and isinstance(v, str):
+            if v in VALID[c]:
+                args[c] = v
+            else:  # intentar mapear por sinónimos lo que dijo el LLM
+                m = router_determinista(v)
+                if c in m:
+                    args[c] = m[c]
+    return args''')
 
 code(r'''# --- sistema (final, agéntico): herramienta + recuperación avanzada ---
 def sistema(pregunta):
@@ -524,12 +588,19 @@ def sistema(pregunta):
     if not idx_validos:
         idx_validos = list(range(len(documentos)))
 
+    # Técnicas finales elegidas POR DIAGNÓSTICO: híbrida (BM25+dense, RRF) + HyDE + herramienta.
+    # El reranking cross-encoder se EVALUÓ y se DESCARTÓ: la ablación mostró que bajaba D3
+    # (0.667 con rerank vs 0.833 sin rerank). Ver sección de ablación y reporte.md.
     pool = 20
     sub_ids = set(doc_ids[i] for i in idx_validos)
     densos = [(i, d) for i, d in buscar_denso(pregunta, k=pool * 3) if i in sub_ids][:pool]
     lexicos = buscar_bm25(pregunta, k=pool, candidatos_idx=idx_validos)
-    fus = rrf([densos, lexicos], top=pool) if (densos or lexicos) else buscar_denso(pregunta, k=pool)
-    finalistas = rerank(pregunta, fus, k=TOP_K)
+    # HyDE restringido al subconjunto filtrado
+    hip = hyde_documento(pregunta)
+    hyde_densos = [(i, d) for i, d in buscar_denso(hip, k=pool * 3) if i in sub_ids][:pool]
+    fus = rrf([densos, lexicos, hyde_densos], top=TOP_K) if (densos or lexicos or hyde_densos) \
+        else buscar_denso(pregunta, k=TOP_K)
+    finalistas = fus[:TOP_K]
     contextos = [d for _, d in finalistas]
     respuesta = generar(SYSTEM_PROMPT, armar_prompt(pregunta, contextos))
     return {'respuesta': respuesta, 'contextos': contextos,
@@ -550,7 +621,10 @@ vara** (firma `harness(eval_set, sistema)`, 3 dimensiones, mismo eval set y juez
 re-instanciamos cada dimensión para QA (lo que el enunciado permite cuando la tarea del M1 era de
 clasificación):
 
-- **D1 (clásica):** similitud por *embeddings* entre la respuesta y la `expected_response`.
+- **D1 (clásica):** precisión de **citación de outfits reales** — fracción de outfits citados en la
+  respuesta que existen en el catálogo y fueron recuperados (en casos fuera de corpus, puntúa 1 si
+  NO cita outfits, que es lo correcto). Reemplaza a la similitud por embeddings, que quedaba saturada
+  y no discriminaba (ver lectura honesta).
 - **D2 (juez):** LLM local (Qwen) con rúbrica 1–5 de calidad de recomendación.
 - **D3 (dominio):** fracción de casos que cumplen el `criterion` (juez ≥ 4) **+ regla dura de
   válvula** en los casos fuera de corpus.
@@ -566,11 +640,35 @@ print('Casos:', len(EVAL_SET), '| fuera de corpus:',
 def juez_generar(sp, up, max_new_tokens=160):
     return generar(sp, up, max_new_tokens=max_new_tokens)''')
 
-code(r'''# --- D1: similitud por embeddings ---
-def d1_similitud(respuestas, esperados):
-    er = embedder.encode(["query: " + r for r in respuestas], normalize_embeddings=True)
-    ee = embedder.encode(["passage: " + e for e in esperados], normalize_embeddings=True)
-    return [float(np.dot(a, b)) for a, b in zip(er, ee)]
+code(r'''# --- D1: métrica clásica = PRECISIÓN DE CITACIÓN DE OUTFITS REALES ---
+# Diagnóstico (ver sección de lectura honesta): la similitud por embeddings contra la
+# 'expected_response' quedaba saturada (~0.88 para todas las versiones, incluso la línea base
+# que inventa), porque cualquier texto de personal shopper se parece a la referencia larga.
+# No discriminaba bueno de malo. La re-instanciamos para medir lo que DEFINE una buena respuesta
+# en este dominio: ¿la respuesta cita outfits que EXISTEN y fueron RECUPERADOS del catálogo?
+#   - En casos EN corpus: fracción de outfits citados que son reales y recuperados (precisión).
+#     Una respuesta que no cita ningún outfit real puntúa 0 (la línea base no puede citar).
+#   - En casos FUERA de corpus: puntúa 1 si NO cita outfits (lo correcto es la válvula), 0 si cita.
+_ID_RE = re.compile(r'[BC]_b\d+')
+_IDS_VALIDOS = set(doc_ids)
+
+def d1_citacion(eval_set, respuestas, outfits_recuperados):
+    scores = []
+    for e, r, recup in zip(eval_set, respuestas, outfits_recuperados):
+        citados = set(_ID_RE.findall(r or ''))
+        reales = {c for c in citados if c in _IDS_VALIDOS}
+        if e['tipo'] == 'fuera_de_corpus':
+            # correcto = no citar ningún outfit (debe activar la válvula)
+            scores.append(1.0 if not citados else 0.0)
+        else:
+            if not citados:
+                scores.append(0.0)                       # no citó nada -> no ancla al catálogo
+            else:
+                recup_set = set(recup or [])
+                # precisión: de lo citado, cuánto es real Y estaba en lo recuperado
+                bien = sum(1 for c in reales if c in recup_set)
+                scores.append(bien / len(citados))
+    return scores
 
 # --- D2: juez LLM 1-5 ---
 RUBRICA_RAG = (
@@ -613,24 +711,24 @@ def d3_cumplimiento(eval_set, respuestas, d2, umbral=4):
 
 code(r'''# --- harness(eval_set, sistema): 3 dimensiones + latencia ---
 def harness(eval_set, sistema_fn, nombre='sistema'):
-    respuestas, contextos, lat = [], [], []
+    respuestas, contextos, outfits, lat = [], [], [], []
     for e in eval_set:
         s = sistema_fn(e['input'])
         if isinstance(s, dict):
             respuestas.append(s.get('respuesta', '')); contextos.append(s.get('contextos', []))
-            lat.append(s.get('latencia_s', 0.0))
+            outfits.append(s.get('outfits', [])); lat.append(s.get('latencia_s', 0.0))
         else:
-            respuestas.append(str(s)); contextos.append([]); lat.append(0.0)
-    esperados = [e['expected_response'] for e in eval_set]
-    d1 = d1_similitud(respuestas, esperados)
+            respuestas.append(str(s)); contextos.append([]); outfits.append([]); lat.append(0.0)
+    d1 = d1_citacion(eval_set, respuestas, outfits)   # métrica clásica = citación de outfits reales
     d2 = d2_juez(eval_set, respuestas)
     d3 = d3_cumplimiento(eval_set, respuestas, d2)
     sc = {'sistema': nombre,
-          'D1_similitud_media': round(float(np.mean(d1)), 3),
-          'D2_juez_medio':      round(float(np.mean(d2)), 3),
-          'D3_cumplimiento':    round(float(np.mean(d3)), 3),
-          'latencia_mediana_s': round(float(np.median(lat)), 3)}
-    det = {'respuestas': respuestas, 'contextos': contextos, 'd1': d1, 'd2': d2, 'd3': d3, 'lat': lat}
+          'D1_citacion_outfits': round(float(np.mean(d1)), 3),
+          'D2_juez_medio':       round(float(np.mean(d2)), 3),
+          'D3_cumplimiento':     round(float(np.mean(d3)), 3),
+          'latencia_mediana_s':  round(float(np.median(lat)), 3)}
+    det = {'respuestas': respuestas, 'contextos': contextos, 'outfits': outfits,
+           'd1': d1, 'd2': d2, 'd3': d3, 'lat': lat}
     return sc, det''')
 
 code(r'''# --- Línea base M2 (sin RAG): el generador SIN catálogo ---
@@ -663,12 +761,13 @@ for nombre, fn in [
 tabla = pd.DataFrame([sc for sc, _ in resultados.values()])
 tabla''')
 
-code(r'''# --- Ablación: quitar una técnica a la vez en el RAG avanzado ---
+code(r'''# --- Ablación: quitar una técnica a la vez (qué aporta cada una) ---
+# Incluye el reranking para EVIDENCIAR que baja D3 (por eso quedó fuera del sistema final).
 ablaciones = {
-    'avanzado completo':        dict(usar_hibrido=True,  usar_rerank=True,  usar_hyde=True),
-    'sin HyDE':                 dict(usar_hibrido=True,  usar_rerank=True,  usar_hyde=False),
-    'sin reranking':            dict(usar_hibrido=True,  usar_rerank=False, usar_hyde=True),
-    'sin hibrida (solo dense)': dict(usar_hibrido=False, usar_rerank=True,  usar_hyde=False),
+    'final (hibrida+HyDE)':      dict(usar_hibrido=True,  usar_rerank=False, usar_hyde=True),
+    'solo dense':                dict(usar_hibrido=False, usar_rerank=False, usar_hyde=False),
+    'hibrida sin HyDE':          dict(usar_hibrido=True,  usar_rerank=False, usar_hyde=False),
+    'con reranking (descartado)':dict(usar_hibrido=True,  usar_rerank=True,  usar_hyde=True),
 }
 filas = []
 for nombre, flags in ablaciones.items():
