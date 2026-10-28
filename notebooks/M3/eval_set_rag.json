@@ -1,0 +1,86 @@
+[
+  {
+    "id": "rag_01",
+    "tipo": "en_corpus",
+    "input": "Busco un outfit elegante y minimalista de mujer para ir a la oficina en invierno, en tonos oscuros.",
+    "expected_response": "El sistema debe recomendar uno o varios outfits reales del catálogo de estilo ejecutivo/minimalista o urbano sofisticado, de ocasión trabajo/business, estación invierno, con prendas en tonos oscuros o neutros (abrigo de lana, pantalones de corte recto, top minimalista). Debe citar el o los outfitID recuperados y no inventar prendas fuera del catálogo.",
+    "criterion": "Recupera outfits de ocasion Business/Trabajo y estilo minimalista/ejecutivo/urbano sofisticado para invierno; la respuesta se apoya en el contexto recuperado (cita outfitIDs) y no inventa prendas. Buena si recomienda al menos un outfit coherente con elegante+minimalista+invierno+tonos oscuros."
+  },
+  {
+    "id": "rag_02",
+    "tipo": "en_corpus",
+    "input": "Quiero un look de estilo colegial vintage para mujer, con falda de cuadros, para usar entre semana.",
+    "expected_response": "Debe recomendar outfits de estilo colegial/preppy vintage que incluyan falda plisada de cuadros, combinados para uso diario/escuela, citando outfitIDs reales del catálogo.",
+    "criterion": "Recupera outfits de estilo colegial/preppy vintage con falda de cuadros/plisada. La respuesta cita outfits reales y menciona la falda de cuadros como elemento. No inventa."
+  },
+  {
+    "id": "rag_03",
+    "tipo": "en_corpus",
+    "input": "Necesito ropa de hombre estilo techwear para exteriores, con pantalones cargo, para el frío.",
+    "expected_response": "Debe recomendar outfits de hombre de estilo techwear/outdoor con pantalones cargo y prendas abrigadas (chaqueta shell, plumón) para otoño/invierno, citando outfitIDs reales.",
+    "criterion": "Recupera outfits de hombre (gender De hombre) estilo techwear con pantalones cargo para clima frío. La respuesta se apoya en el contexto y cita outfits reales."
+  },
+  {
+    "id": "rag_04",
+    "tipo": "en_corpus",
+    "input": "¿Qué me recomiendas de estilo casual de mezclilla con vaqueros de pierna ancha?",
+    "expected_response": "Debe recomendar outfits de estilo casual de mezclilla/denim que incluyan vaqueros o chaqueta de mezclilla de pierna ancha, citando outfitIDs reales.",
+    "criterion": "Recupera outfits de estilo casual de mezclilla con prendas denim de pierna ancha. Cita outfits reales y no inventa."
+  },
+  {
+    "id": "rag_05",
+    "tipo": "en_corpus",
+    "input": "Quiero un conjunto abrigado con abrigo largo de lana para un evento social formal.",
+    "expected_response": "Debe recomendar outfits que incluyan abrigo largo de lana, apropiados para eventos sociales/formales, citando outfitIDs reales del catálogo.",
+    "criterion": "Recupera outfits con abrigo largo de lana para ocasion Eventos sociales/formal. La respuesta cita outfits reales y el abrigo de lana aparece como prenda. No inventa."
+  },
+  {
+    "id": "rag_06",
+    "tipo": "en_corpus",
+    "input": "Busco algo de estilo old money / lujo discreto para hombre, en tonos neutros y cálidos.",
+    "expected_response": "Debe recomendar outfits de hombre de estilo 'old money'/lujo discreto en tonos neutros/cálidos (prendas de punto, cuello alto, pantalones de pierna ancha), citando outfitIDs reales.",
+    "criterion": "Recupera outfits de hombre estilo old money/lujo discreto en tonos neutros/calidos. Cita outfits reales y se apoya en el contexto."
+  },
+  {
+    "id": "rag_07",
+    "tipo": "en_corpus",
+    "input": "Recomiéndame un outfit de chica dulce y atrevida con minifalda y botas altas.",
+    "expected_response": "Debe recomendar outfits de estilo 'dulce y atrevido' (sweet-cool) con minifalda y botas altas hasta la rodilla, citando outfitIDs reales.",
+    "criterion": "Recupera outfits de estilo dulce y atrevido con minifalda y botas altas. Cita outfits reales del catálogo. No inventa."
+  },
+  {
+    "id": "rag_08",
+    "tipo": "en_corpus",
+    "input": "¿Tienes un look coreano moderno de hombre con detalles de cadenas para salir de viaje?",
+    "expected_response": "Debe recomendar outfits de hombre de estilo coreano moderno con detalles como cadenas decorativas, apropiados para viaje/uso urbano, citando outfitIDs reales.",
+    "criterion": "Recupera outfits de hombre estilo coreano moderno con detalles de cadenas. La respuesta se apoya en el contexto y cita outfits reales."
+  },
+  {
+    "id": "rag_09",
+    "tipo": "en_corpus",
+    "input": "Quiero un conjunto de mujer con blazer extragrande y pantalones de pierna ancha, estilo neutro minimalista.",
+    "expected_response": "Debe recomendar outfits de estilo neutro minimalista con blazer extragrande (oversized) y pantalones de pierna ancha, citando outfitIDs reales.",
+    "criterion": "Recupera outfits de estilo neutro minimalista con blazer extragrande y pantalones de pierna ancha. Cita outfits reales. No inventa."
+  },
+  {
+    "id": "rag_10",
+    "tipo": "en_corpus",
+    "input": "Busco un look de estilo vintage americano con chaqueta de mezclilla desgastada para el día a día.",
+    "expected_response": "Debe recomendar outfits de estilo vintage estadounidense/americano con chaqueta de mezclilla desgastada para uso diario, citando outfitIDs reales.",
+    "criterion": "Recupera outfits de estilo vintage americano con chaqueta de mezclilla desgastada. Cita outfits reales y se apoya en el contexto."
+  },
+  {
+    "id": "rag_11",
+    "tipo": "fuera_de_corpus",
+    "input": "¿Cuánto cuesta el envío a Medellín y cuántos días tarda en llegar mi pedido?",
+    "expected_response": "VÁLVULA DE ESCAPE: la pregunta es sobre envíos/logística, que no está en el catálogo de outfits. El sistema debe indicar explícitamente que no tiene esa información en el catálogo y no inventar un precio ni un tiempo de envío.",
+    "criterion": "FUERA DE CORPUS. La respuesta correcta es activar la válvula de escape: decir que no se encuentra esa información en el catálogo de prendas/outfits. Se penaliza inventar precios, tiempos de envío o recomendar outfits como si respondiera la pregunta."
+  },
+  {
+    "id": "rag_12",
+    "tipo": "fuera_de_corpus",
+    "input": "¿Qué talla numérica exacta (38, 40, 42) me queda mejor y cuál es la política de devoluciones?",
+    "expected_response": "VÁLVULA DE ESCAPE: la pregunta es sobre tallas numéricas y política de devoluciones, que no están en el catálogo (el corpus describe estilos, prendas y ocasiones, no tallas numéricas ni políticas). El sistema debe decir que no tiene esa información y no inventarla.",
+    "criterion": "FUERA DE CORPUS. La respuesta correcta es la válvula de escape: indicar que el catálogo no contiene tallas numéricas ni política de devoluciones. Se penaliza inventar una talla concreta o una política de devoluciones."
+  }
+]
