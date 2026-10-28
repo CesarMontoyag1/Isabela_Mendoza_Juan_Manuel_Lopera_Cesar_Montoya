@@ -115,23 +115,24 @@ code(r'''# --- Localización de los archivos del corpus ---
 # OPCIÓN B: montar Google Drive y copiar los CSV a notebooks/M3/.
 #   from google.colab import drive; drive.mount('/content/drive')
 #
-# Esta celda detecta dónde están los CSV y ajusta M3_DIR automáticamente.
+# Esta celda detecta dónde está la carpeta M3 (con el corpus en M3/corpus/) y ajusta M3_DIR.
 import os, glob
 candidatos = ['notebooks/M3', '.', '/content', '/content/drive/MyDrive']
 M3_DIR = None
 for base in candidatos:
-    if os.path.exists(os.path.join(base, 'corpus_look_es.csv')):
+    if os.path.exists(os.path.join(base, 'corpus', 'corpus_look_es.csv')):
         M3_DIR = base; break
 if M3_DIR is None:
-    hits = glob.glob('/content/**/corpus_look_es.csv', recursive=True) + \
-           glob.glob('**/corpus_look_es.csv', recursive=True)
-    M3_DIR = os.path.dirname(hits[0]) if hits else 'notebooks/M3'
+    hits = glob.glob('/content/**/corpus/corpus_look_es.csv', recursive=True) + \
+           glob.glob('**/corpus/corpus_look_es.csv', recursive=True)
+    M3_DIR = os.path.dirname(os.path.dirname(hits[0])) if hits else 'notebooks/M3'
 print('M3_DIR =', M3_DIR)
-assert os.path.exists(os.path.join(M3_DIR, 'corpus_look_es.csv')), \
-    'No encuentro corpus_look_es.csv. Sube los 3 archivos a esa carpeta (ver celda).'
-print('Archivos requeridos presentes:',
-      all(os.path.exists(os.path.join(M3_DIR, f)) for f in
-          ['corpus_look_es.csv', 'corpus_label_es.csv', 'eval_set_rag.json']))''')
+assert os.path.exists(os.path.join(M3_DIR, 'corpus', 'corpus_look_es.csv')), \
+    'No encuentro corpus/corpus_look_es.csv. Verifica la estructura de notebooks/M3/.'
+print('Estructura M3 presente:',
+      os.path.isdir(os.path.join(M3_DIR, 'corpus')),
+      os.path.isdir(os.path.join(M3_DIR, 'eval')),
+      os.path.isdir(os.path.join(M3_DIR, 'resultados')))''')
 
 code(r'''# --- Reproducibilidad: semillas y versiones fijas ---
 import os, random, json, time, re, math, collections
@@ -159,12 +160,14 @@ try:
     M3_DIR
 except NameError:
     M3_DIR = 'notebooks/M3' if os.path.isdir('notebooks/M3') else '.'
-LOOK_CSV   = os.path.join(M3_DIR, 'corpus_look_es.csv')
-LABEL_CSV  = os.path.join(M3_DIR, 'corpus_label_es.csv')
-EVAL_PATH  = os.path.join(M3_DIR, 'eval_set_rag.json')
+# Estructura organizada: corpus/, eval/, resultados/ dentro de M3_DIR
+LOOK_CSV   = os.path.join(M3_DIR, 'corpus', 'corpus_look_es.csv')
+LABEL_CSV  = os.path.join(M3_DIR, 'corpus', 'corpus_label_es.csv')
+EVAL_PATH  = os.path.join(M3_DIR, 'eval', 'eval_set_rag.json')
 CHROMA_DIR = os.path.join(M3_DIR, 'chroma_db')
-OUT_SCORECARD = os.path.join(M3_DIR, 'scorecard_m3.csv')
-OUT_RAGAS     = os.path.join(M3_DIR, 'ragas_m3.csv')
+os.makedirs(os.path.join(M3_DIR, 'resultados'), exist_ok=True)
+OUT_SCORECARD = os.path.join(M3_DIR, 'resultados', 'scorecard_m3.csv')
+OUT_RAGAS     = os.path.join(M3_DIR, 'resultados', 'ragas_m3.csv')
 
 print('DEVICE:', DEVICE)
 for p in (LOOK_CSV, LABEL_CSV, EVAL_PATH):
