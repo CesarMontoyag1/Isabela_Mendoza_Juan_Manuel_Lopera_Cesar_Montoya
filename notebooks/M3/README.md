@@ -1,6 +1,6 @@
 # Módulo 3 — Sistema RAG agéntico: *personal shopper* de moda
 
-**En una frase (sin tecnicismos):** este sistema lee lo que una persona pide con sus propias
+Este sistema lee lo que una persona pide con sus propias
 palabras ("busco algo elegante y abrigado para una boda en invierno") y le **recomienda conjuntos
 de ropa reales de un catálogo**, explicándole por qué encajan. Si le preguntan algo que el catálogo
 no sabe (precios, envíos, tallas numéricas), **lo dice en vez de inventar**.
@@ -33,7 +33,6 @@ depende de ninguna API).
 ```
 notebooks/M3/
 ├── rag_sistema.ipynb         # notebook principal (pipeline de punta a punta)
-├── build_notebook.py         # generador del notebook (fuente de verdad)
 ├── README.md                 # este reporte
 ├── corpus/
 │   ├── corpus_look_es.csv     # 800 outfits (español)  ← indexado
@@ -51,7 +50,7 @@ notebooks/M3/
 
 ## 2. Corpus, *chunking* e índice
 
-- **Fuente:** catálogo de outfits de moda de e-commerce (colecciones de mujer y de hombre),
+- **Fuente:** catálogo de outfits de moda de e-commerce (colecciones de mujer y de hombre) tomado del repositorio (https://github.com/recsys-benchmark/FashionStylist/tree/main/Dataset),
   traducido al español con `data_generation/translate_corpus.py`. **Licencia:** datos de uso
   académico para SI4006; corpus derivado y traducido. Los originales en inglés y la caché de
   traducción están en `corpus/fuente_en/` para reproducir la traducción.
