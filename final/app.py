@@ -48,43 +48,71 @@ obs = Observador(wandb_project=WANDB_PROJECT)
 
 
 def responder(pregunta, imagen, modo):
-    """Maneja una petición de la UI: imagen opcional -> consulta -> RAG -> respuesta + log."""
+    """Maneja una petición de la UI: imagen opcional -> consulta -> RAG -> respuesta + log.
+    Mide latencia extremo a extremo (visión + RAG) y captura errores sin romper la UI."""
+    import time, traceback
+    t_ini = time.perf_counter()
+    pregunta = (pregunta or "").strip()
     con_imagen = imagen is not None
+    vision_usada = False
     nota_visual = ""
-    if con_imagen:
-        caption, consulta_img = vision.imagen_a_consulta(imagen)
-        if consulta_img:
-            nota_visual = "Interpreté tu imagen como: *" + caption + "*\n\n"
-            # si el usuario no escribió nada, usamos la consulta derivada de la imagen
-            pregunta = (pregunta.strip() + ". " + consulta_img) if pregunta.strip() else consulta_img
-        else:
-            nota_visual = "_(No pude procesar la imagen; respondo solo con tu texto.)_\n\n"
 
-    if not (pregunta or "").strip():
-        return "Escribe una petición o sube una imagen de una prenda.", "", "{}"
+    try:
+        if con_imagen:
+            t_v = time.perf_counter()
+            caption, consulta_img = vision.imagen_a_consulta(imagen)
+            lat_vision = time.perf_counter() - t_v
+            if consulta_img:                       # se reconoció una prenda
+                vision_usada = True
+                nota_visual = "Interpreté tu imagen como: *" + caption + "*\n\n"
+                pregunta = (pregunta + ". " + consulta_img) if pregunta else consulta_img
+            elif caption is not None:              # hay modelo pero la imagen no parece ropa
+                nota_visual = ("_No reconocí una prenda en la imagen (la vi como: " + caption +
+                               "). Respondo con tu texto si lo hay._\n\n")
+            else:                                  # no hay modelo de visión
+                nota_visual = "_(Componente visual no disponible; respondo solo con tu texto.)_\n\n"
 
-    salida = shopper.sistema(pregunta, modo=modo)
-    salida["valvula"] = shopper.activo_valvula(salida["respuesta"])
+        if not pregunta:
+            return ("Escribe una petición o sube una **foto de una prenda**.", "",
+                    "sin consulta")
 
-    # Detalle de outfits recomendados (prendas reales desde los datos)
-    detalle = ""
-    for oid in salida["outfits"][:3]:
-        exp = shopper.expandir_outfit(oid)
-        if not exp:
-            continue
-        prendas = "\n".join("   • " + p["titulo"] + " (" + p["color"] + ")" for p in exp["prendas"])
-        detalle += ("**" + oid + "** — " + exp["look"][:90] + "\n" + prendas + "\n\n")
+        salida = shopper.sistema(pregunta, modo=modo)
+        salida["valvula"] = shopper.activo_valvula(salida["respuesta"]) or salida.get("valvula_pre", False)
+        lat_total = time.perf_counter() - t_ini
 
-    # Logging estructurado + W&B (sin datos personales)
-    evento = construir_evento(pregunta, salida, modo, con_imagen=con_imagen)
-    obs.registrar(evento)
+        # Detalle de outfits (prendas reales desde los datos, no de la prosa del modelo)
+        detalle = ""
+        for oid in salida["outfits"][:3]:
+            exp = shopper.expandir_outfit(oid)
+            if not exp:
+                continue
+            prendas = "\n".join("   • " + p["titulo"] + " (" + p["color"] + ")"
+                                for p in exp["prendas"])
+            detalle += ("**" + oid + "** — " + exp["look"][:90] + "\n" + prendas + "\n\n")
 
-    respuesta_md = nota_visual + salida["respuesta"]
-    meta = ("Modo: " + modo + " | herramienta: " +
-            ("sí " + str(salida["filtro"]) if salida["uso_herramienta"] else "no") +
-            " | latencia: " + str(round(salida["latencia_s"], 2)) + " s" +
-            (" | válvula activada" if salida["valvula"] else ""))
-    return respuesta_md, (detalle or "_(sin outfits para mostrar)_"), meta
+        # Logging estructurado + W&B (sin datos personales). 'vision' solo si se usó de verdad.
+        evento = construir_evento(pregunta, salida, modo, con_imagen=vision_usada)
+        evento["latencia_total_s"] = round(lat_total, 3)
+        evento["latencias_etapa"] = salida.get("latencias", {})
+        evento["vision_ok"] = vision_usada
+        obs.registrar(evento)
+
+        respuesta_md = nota_visual + salida["respuesta"]
+        meta = ("Modo: " + modo + " | herramienta: " +
+                ("sí " + str(salida["filtro"]) if salida["uso_herramienta"] else "no") +
+                " | latencia total: " + str(round(lat_total, 2)) + " s" +
+                (" | VÁLVULA activada" if salida["valvula"] else ""))
+        return respuesta_md, (detalle or "_(sin outfits para mostrar)_"), meta
+
+    except Exception as e:
+        traceback.print_exc()
+        try:
+            obs.registrar({"ts": "", "modo": modo, "error": str(e)[:200],
+                           "latencia_s": round(time.perf_counter() - t_ini, 3)})
+        except Exception:
+            pass
+        return ("Ocurrió un error procesando tu petición. Intenta de nuevo con otra consulta.",
+                "", "error: " + str(e)[:120])
 
 
 def health():
@@ -99,7 +127,11 @@ with gr.Blocks(title="Personal Shopper de Moda") as demo:
         "# 👗 Personal Shopper de Moda\n"
         "Pídeme un outfit con tus palabras (o **sube una foto** de una prenda) y te recomiendo "
         "conjuntos **reales del catálogo**. Si preguntas algo que no está en el catálogo "
-        "(precios, envíos, tallas), te lo digo en vez de inventar."
+        "(precios, envíos, tallas), te lo digo en vez de inventar.\n\n"
+        "> ⚠️ **Es una sugerencia, no una garantía.** El catálogo no tiene precios, tallas "
+        "numéricas ni envíos. 🔒 **Privacidad:** si subes una foto, se procesa solo para esta "
+        "recomendación y **no se guarda**; los registros solo almacenan métricas (latencia, si se "
+        "usó la herramienta), nunca tu texto ni tu imagen."
     )
     with gr.Row():
         with gr.Column(scale=3):
@@ -117,9 +149,12 @@ with gr.Blocks(title="Personal Shopper de Moda") as demo:
 
     btn.click(responder, inputs=[txt, img, modo], outputs=[out_resp, out_det, out_meta])
 
-    gr.Markdown("---\n### Estado del sistema (health check)")
+    gr.Markdown("---\n### Estado del sistema (health check)\n"
+                "Se expone como API con nombre `health`. Desde código:\n"
+                "`from gradio_client import Client; "
+                "print(Client('<url-del-space>').predict(api_name='/health'))`")
     hc = gr.Textbox(label="health", interactive=False)
-    gr.Button("Comprobar estado").click(health, outputs=hc)
+    gr.Button("Comprobar estado").click(health, outputs=hc, api_name="health")
 
     gr.Examples(
         examples=[
@@ -132,4 +167,6 @@ with gr.Blocks(title="Personal Shopper de Moda") as demo:
 
 
 if __name__ == "__main__":
+    # Cola con concurrencia 1: llama.cpp no es seguro con llamadas concurrentes al mismo contexto.
+    demo.queue(max_size=16, default_concurrency_limit=1)
     demo.launch()

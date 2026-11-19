@@ -139,9 +139,17 @@ def hacer_juez_mismo_generador(shopper):
     return lambda sp, up: shopper.generar(sp, up, max_new_tokens=160)
 
 
-def hacer_juez_gemini(modelo="gemini-3.5-flash-lite"):
-    """Juez = Gemini (modelo DISTINTO al generador). Recomendado para que D2 discrimine.
-    Requiere GEMINI_API_KEY en el entorno. Si no está, devuelve None (usar juez local)."""
+class _FallosJuez:
+    """Contador de fallos del juez, para que un error de API NO se convierta en un D2 falso."""
+    def __init__(self):
+        self.n = 0
+
+
+def hacer_juez_gemini(modelo="gemini-2.5-flash", contador=None):
+    """Juez = Gemini (modelo DISTINTO al generador) para que D2 discrimine entre sistemas.
+    Requiere GEMINI_API_KEY. Devuelve None si no hay clave (entonces se usa el juez local).
+    Verifica que el modelo responde ANTES de devolver el juez (falla ruidosamente si no).
+    Lleva la cuenta de fallos en `contador` para reportarlos (no los enmascara como puntaje 3)."""
     import os
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
@@ -150,12 +158,26 @@ def hacer_juez_gemini(modelo="gemini-3.5-flash-lite"):
     from google.genai import types
     cli = genai.Client(api_key=key)
 
+    # Verificación previa: el modelo existe y responde.
+    try:
+        _ = cli.models.generate_content(
+            model=modelo, contents="responde: ok",
+            config=types.GenerateContentConfig(temperature=0.0))
+    except Exception as e:
+        raise RuntimeError("El juez Gemini ('" + modelo + "') no responde: " + str(e) +
+                           ". Revisa GEMINI_API_KEY o el nombre del modelo.")
+
+    cont = contador if contador is not None else _FallosJuez()
+
     def juez(sp, up):
         try:
             r = cli.models.generate_content(
                 model=modelo, contents=up,
                 config=types.GenerateContentConfig(system_instruction=sp, temperature=0.0))
             return r.text or ""
-        except Exception:
-            return ""
+        except Exception as e:
+            cont.n += 1
+            print("[juez] fallo de Gemini (" + str(cont.n) + "): " + str(e)[:100])
+            return ""  # se contará como puntaje 3, pero queda registrado el fallo
+    juez.fallos = cont
     return juez

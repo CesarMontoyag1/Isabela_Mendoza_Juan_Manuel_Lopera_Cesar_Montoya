@@ -100,6 +100,26 @@ def _norm(v):
     return "/".join(mapa.get(p.strip(), p.strip()) for p in str(v).split("/"))
 
 
+# Pre-filtro determinista de la VÁLVULA DE ESCAPE. El catálogo solo describe estilos, prendas,
+# estaciones y ocasiones; NO tiene precios, envíos, tallas numéricas, stock ni políticas. Si la
+# consulta pide eso, activamos la válvula ANTES de llamar al generador (un modelo de 1.5B cuantizado
+# no es fiable escribiendo la frase exacta). Esto corrige el fallo 2/2 de la válvula en GGUF.
+PATRONES_FUERA_CATALOGO = [
+    r"\bprecio", r"\bcu[aá]nto\s+(cuesta|vale|sale)", r"\bvale\b", r"\bcost[oó]\b",
+    r"\benv[ií]o", r"\bdespacho", r"\bentrega\b", r"\bdomicilio", r"\benv[ií]an\b",
+    r"\bdevoluci[oó]n", r"\bdevolver", r"\bgarant[ií]a", r"\bcambio\b", r"\breembolso",
+    r"\btalla\s*\d", r"\btallas?\s+(num[eé]ric|\d)", r"\bn[uú]mero de talla",
+    r"\bstock\b", r"\bdisponib", r"\binventario", r"\bhorario", r"\bhora de atenci",
+    r"\bm[eé]todo de pago", r"\btarjeta\b", r"\bfactura", r"\bdescuento", r"\bcup[oó]n",
+]
+_RE_FUERA = re.compile("|".join(PATRONES_FUERA_CATALOGO), re.IGNORECASE)
+
+
+def es_fuera_de_catalogo(pregunta):
+    """True si la consulta pide algo que el catálogo no contiene (precio/envío/talla/etc.)."""
+    return bool(_RE_FUERA.search(pregunta or ""))
+
+
 # ===========================================================================
 # SISTEMA
 # ===========================================================================
@@ -123,6 +143,9 @@ class PersonalShopper:
         self.gguf_file = gguf_file
         self._device = device
         self._backend = "gguf" if load_in == "gguf" else "hf"
+        # HyDE duplica las generaciones (dispara la latencia). Se puede desactivar vía env var
+        # RAG_USAR_HYDE=0 (recomendado en el Space CPU) o con el parámetro en sistema().
+        self.usar_hyde = os.environ.get("RAG_USAR_HYDE", "1") not in ("0", "false", "False")
         self._log("Inicializando PersonalShopper...")
         self.corpus_dir = self._resolver_corpus_dir()
         self._log("corpus_dir resuelto: " + os.path.abspath(self.corpus_dir))
@@ -300,12 +323,13 @@ class PersonalShopper:
         if self.gguf_repo:
             from huggingface_hub import hf_hub_download
             ruta = hf_hub_download(repo_id=self.gguf_repo, filename=self.gguf_file)
-        self.llm = Llama(model_path=ruta, n_ctx=4096, n_threads=os.cpu_count() or 4,
-                         verbose=False, chat_format="qwen")
+        # n_ctx=2048 basta (el prompt trae top-5 outfits); seed fijo para reproducibilidad.
+        self.llm = Llama(model_path=ruta, n_ctx=2048, n_threads=os.cpu_count() or 4,
+                         n_batch=512, seed=SEED, verbose=False, chat_format="qwen")
         self.gen_tok = None
         self._log("Generador GGUF cargado: " + str(ruta))
 
-    def generar(self, system_prompt, user_prompt, max_new_tokens=320):
+    def generar(self, system_prompt, user_prompt, max_new_tokens=200):
         if self._backend == "gguf":
             out = self.llm.create_chat_completion(
                 messages=[{"role": "system", "content": system_prompt},
@@ -325,13 +349,17 @@ class PersonalShopper:
 
     # ---------- recuperación ----------
     def _buscar_denso(self, pregunta, k=TOP_K, ids_permitidos=None):
-        n = k if ids_permitidos is None else min(len(self.documentos), k * 4)
-        res = self.col.query(query_embeddings=self._embed([pregunta], "query").tolist(),
-                             n_results=n, include=["documents", "metadatas"])
-        pares = list(zip([m["outfitID"] for m in res["metadatas"][0]], res["documents"][0]))
+        # Si hay subconjunto permitido, lo pasamos como filtro 'where' de Chroma con $in sobre el
+        # outfitID. Así Chroma devuelve k resultados YA filtrados (no pedimos k*4 y recortamos).
+        where = None
         if ids_permitidos is not None:
-            pares = [(i, d) for i, d in pares if i in ids_permitidos][:k]
-        return pares
+            ids = list(ids_permitidos)
+            if not ids:
+                return []
+            where = {"outfitID": {"$in": ids}}
+        res = self.col.query(query_embeddings=self._embed([pregunta], "query").tolist(),
+                             n_results=k, where=where, include=["documents", "metadatas"])
+        return list(zip([m["outfitID"] for m in res["metadatas"][0]], res["documents"][0]))
 
     def _buscar_bm25(self, pregunta, k=POOL, ids_permitidos=None):
         scores = self.bm25.get_scores(self._tok(pregunta))
@@ -353,17 +381,18 @@ class PersonalShopper:
                "2-3 frases un outfit hipotético que la satisfaría (estilo, prendas, colores, "
                "estación, ocasión). Solo la descripción, en español.")
         return self.generar(sys, "Petición: " + pregunta + "\nDescripción del outfit ideal:",
-                            max_new_tokens=120)
+                            max_new_tokens=60)
 
     def _recuperar_avanzado(self, pregunta, ids_permitidos=None, usar_hibrido=True,
                             usar_hyde=True):
-        """Recuperación avanzada: híbrida (BM25+dense, RRF) + HyDE. Opcionalmente restringida
+        """Recuperación avanzada: híbrida (BM25+dense, RRF) + HyDE (opcional). Puede restringirse
         a un subconjunto de IDs (lo usa el modo 'final' con la herramienta)."""
         listas = []
         if usar_hibrido:
             listas.append(self._buscar_denso(pregunta, k=POOL, ids_permitidos=ids_permitidos))
             listas.append(self._buscar_bm25(pregunta, k=POOL, ids_permitidos=ids_permitidos))
         if usar_hyde:
+            # HyDE: genera un documento hipotético (1 generación extra = el mayor costo de latencia).
             hip = self._hyde(pregunta)
             listas.append(self._buscar_denso(hip, k=POOL, ids_permitidos=ids_permitidos))
             listas.append(self._buscar_bm25(hip, k=POOL, ids_permitidos=ids_permitidos))
@@ -387,7 +416,10 @@ class PersonalShopper:
         def ok(m):
             return all(v in m.get(c, "") for c, v in args.items())
         ids = [self.doc_ids[k] for k, m in enumerate(self.metadatos) if ok(m)]
-        return ids or None  # si el filtro deja vacío, no filtrar
+        if not ids:
+            self._log("Aviso: el filtro " + str(args) + " no dejó outfits; se ignora (sin filtrar).")
+            return None
+        return ids
 
     # ---------- prompt ----------
     def _armar_prompt(self, pregunta, contextos):
@@ -400,52 +432,88 @@ class PersonalShopper:
                 "pregunta es de precio, envío, talla numérica o políticas de la tienda.")
 
     # ---------- API pública ----------
-    def sistema(self, pregunta, modo="avanzado"):
+    def sistema(self, pregunta, modo="avanzado", usar_hyde=None):
         """Punto de entrada único. modo:
           'baseline' = sin RAG (generador solo);
           'ingenuo'  = top-k denso;
-          'avanzado' = híbrida + HyDE;
+          'avanzado' = híbrida (+ HyDE según self.usar_hyde);
           'final'    = avanzado + herramienta de filtro de metadatos.
-        Devuelve dict: respuesta, contextos, outfits, latencia_s, uso_herramienta, filtro.
+        Devuelve dict: respuesta, contextos, outfits, latencia_s, latencias (por etapa),
+        uso_herramienta, filtro, valvula_pre (si la válvula se activó por el pre-filtro).
         """
-        t0 = time.time()
+        t0 = time.perf_counter()
         uso_herramienta, filtro = False, {}
+        etapas = {}
+        hyde = self.usar_hyde if usar_hyde is None else usar_hyde
+
+        # --- Válvula determinista ANTES del generador (precio/envío/talla/etc.) ---
+        if modo != "baseline" and es_fuera_de_catalogo(pregunta):
+            return {"respuesta": VALVULA + " (la consulta pide datos de precio, envío, talla "
+                    "numérica, stock o políticas, que no están en el catálogo de outfits).",
+                    "contextos": [], "outfits": [], "latencia_s": time.perf_counter() - t0,
+                    "latencias": {"valvula_pre": time.perf_counter() - t0},
+                    "uso_herramienta": False, "filtro": {}, "valvula_pre": True}
 
         if modo == "baseline":
             prompt = ("PREGUNTA DEL CLIENTE: " + pregunta +
                       "\n\nResponde como personal shopper. (No tienes un catálogo disponible.)")
             resp = self.generar(SYSTEM_PROMPT, prompt)
             return {"respuesta": resp, "contextos": [], "outfits": [],
-                    "latencia_s": time.time() - t0, "uso_herramienta": False, "filtro": {}}
+                    "latencia_s": time.perf_counter() - t0, "latencias": {}, "uso_herramienta": False,
+                    "filtro": {}, "valvula_pre": False}
 
+        tr = time.perf_counter()
         if modo == "ingenuo":
             recup = self._buscar_denso(pregunta, k=TOP_K)
         elif modo == "final":
             filtro = self.router_determinista(pregunta)
             uso_herramienta = bool(filtro)
             ids = self._ids_filtrados(filtro)
-            recup = self._recuperar_avanzado(pregunta, ids_permitidos=ids)
+            recup = self._recuperar_avanzado(pregunta, ids_permitidos=ids, usar_hyde=hyde)
         else:  # avanzado
-            recup = self._recuperar_avanzado(pregunta)
+            recup = self._recuperar_avanzado(pregunta, usar_hyde=hyde)
+        etapas["recuperacion_s"] = round(time.perf_counter() - tr, 3)
 
         contextos = [d for _, d in recup]
         outfits = [i for i, _ in recup]
+        tg = time.perf_counter()
         resp = self.generar(SYSTEM_PROMPT, self._armar_prompt(pregunta, contextos))
+        etapas["generacion_s"] = round(time.perf_counter() - tg, 3)
         return {"respuesta": resp, "contextos": contextos, "outfits": outfits,
-                "latencia_s": time.time() - t0, "uso_herramienta": uso_herramienta,
-                "filtro": filtro}
+                "latencia_s": time.perf_counter() - t0, "latencias": etapas,
+                "uso_herramienta": uso_herramienta, "filtro": filtro, "valvula_pre": False}
 
     def activo_valvula(self, respuesta):
         return VALVULA.lower() in (respuesta or "").lower()
 
     def health_check(self):
-        """Devuelve el estado del sistema sin hacer una pregunta real (para el despliegue)."""
+        """Comprueba de verdad que el sistema está vivo: índice responde, generador cargado.
+        Devuelve status 'ok' o 'degraded' con el detalle de cada componente. Para el despliegue."""
+        checks = {}
+        # 1) índice responde a una consulta de 1 resultado
+        try:
+            r = self.col.query(query_embeddings=self._embed(["abrigo"], "query").tolist(),
+                               n_results=1, include=["metadatas"])
+            checks["indice"] = "ok" if r["metadatas"][0] else "vacio"
+        except Exception as e:
+            checks["indice"] = "error: " + str(e)[:80]
+        # 2) generador cargado
+        if self._backend == "gguf":
+            checks["generador"] = "ok" if getattr(self, "llm", None) is not None else "no cargado"
+        else:
+            checks["generador"] = "ok" if getattr(self, "gen_model", None) is not None else "no cargado"
+        # 3) corpus
+        checks["corpus"] = "ok" if len(self.documentos) > 0 else "vacio"
+
+        status = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
         return {
-            "status": "ok",
+            "status": status,
+            "checks": checks,
             "corpus_outfits": len(self.documentos),
             "indice_chunks": self.col.count(),
-            "generador": self.gen_model_name,
+            "generador_modelo": self.gen_model_name,
             "load_in": self.load_in,
+            "usar_hyde": self.usar_hyde,
             "device": self._device,
             "embeddings": EMBED_MODEL,
         }

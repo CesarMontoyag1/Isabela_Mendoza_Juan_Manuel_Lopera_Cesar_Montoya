@@ -19,6 +19,8 @@ componente solo DESCRIBE imágenes que sube el usuario; no genera imágenes.
 
 from __future__ import annotations
 
+import re
+
 # Glosario mínimo EN->ES de términos de moda para convertir el caption de BLIP en consulta.
 _GLOSARIO = {
     "jacket": "chaqueta", "coat": "abrigo", "sweater": "suéter", "hoodie": "sudadera con capucha",
@@ -31,8 +33,21 @@ _GLOSARIO = {
     "brown": "marrón", "gray": "gris", "grey": "gris", "beige": "beige", "pink": "rosa",
     "navy": "azul marino", "plaid": "de cuadros", "striped": "de rayas", "denim": "de mezclilla",
     "leather": "de cuero", "wool": "de lana", "woman": "mujer", "man": "hombre",
-    "wearing": "con", "person": "", "a": "", "the": "", "in": "", "and": "y", "with": "con",
+    "wearing": "con", "and": "y", "with": "con",
 }
+
+# Prendas (claves del glosario que SON ropa). Si el caption no contiene ninguna, la imagen
+# probablemente no es de moda y el sistema se abstiene (no inventa una consulta).
+_PRENDAS = {
+    "jacket", "coat", "sweater", "hoodie", "shirt", "t-shirt", "tshirt", "dress", "skirt",
+    "pants", "trousers", "jeans", "shorts", "suit", "blazer", "boots", "shoes", "sneakers",
+    "scarf", "hat", "bag", "vest", "cardigan",
+}
+
+# Palabras de relleno del caption de BLIP que no aportan a la búsqueda (se descartan).
+_STOP = {"a", "the", "in", "on", "of", "is", "are", "standing", "holding", "front", "background",
+         "person", "someone", "picture", "image", "photo", "there", "that", "this", "it", "to",
+         "for", "at", "by", "up", "out", "he", "she", "they", "his", "her"}
 
 
 class VisionCaptioner:
@@ -75,17 +90,34 @@ class VisionCaptioner:
         return self.processor.decode(out[0], skip_special_tokens=True)
 
     def caption_a_consulta(self, caption):
-        """Convierte el caption en inglés en una consulta de moda en español (mapeo de términos)."""
+        """Convierte el caption (inglés) en una consulta de moda en español.
+        Devuelve None si el caption NO contiene ninguna prenda reconocible (imagen no-moda),
+        para que el sistema se abstenga en vez de inventar ('un perro' -> no busca outfits)."""
         if not caption:
             return None
+        tokens = caption.lower().replace(",", " ").replace(".", " ").split()
+        hay_prenda = any(t in _PRENDAS for t in tokens)
+        if not hay_prenda:
+            return None  # la imagen no parece de moda
         palabras = []
-        for w in caption.lower().replace(",", " ").split():
-            palabras.append(_GLOSARIO.get(w, w))
-        consulta = " ".join(p for p in palabras if p).strip()
-        return "Busco un outfit parecido a: " + consulta
+        for w in tokens:
+            if w in _STOP:
+                continue
+            trad = _GLOSARIO.get(w)
+            if trad is not None:
+                if trad:
+                    palabras.append(trad)
+            elif re.match(r"^[a-záéíóúñ]+$", w) and w not in _STOP:
+                # palabra desconocida: solo la conservamos si parece española (evita inglés suelto)
+                if not re.search(r"[kw]", w) and w[-3:] not in ("ing", "ed"):
+                    palabras.append(w)
+        consulta = " ".join(palabras).strip()
+        return ("Busco un outfit parecido a: " + consulta) if consulta else None
 
     def imagen_a_consulta(self, imagen):
-        """Atajo: imagen -> (caption_en, consulta_es). (None, None) si no hay modelo."""
+        """Atajo: imagen -> (caption_en, consulta_es).
+        - (None, None): no hay modelo de visión.
+        - (caption, None): se reconoció la imagen pero NO parece ropa (abstenerse)."""
         cap = self.describir(imagen)
         if cap is None:
             return None, None
