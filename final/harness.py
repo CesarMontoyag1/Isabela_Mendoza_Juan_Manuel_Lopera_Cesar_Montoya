@@ -145,7 +145,7 @@ class _FallosJuez:
         self.n = 0
 
 
-def hacer_juez_gemini(modelo="gemini-2.5-flash", contador=None):
+def hacer_juez_gemini(modelo="gemini-3.5-flash-lite", contador=None):
     """Juez = Gemini (modelo DISTINTO al generador) para que D2 discrimine entre sistemas.
     Requiere GEMINI_API_KEY. Devuelve None si no hay clave (entonces se usa el juez local).
     Verifica que el modelo responde ANTES de devolver el juez (falla ruidosamente si no).
