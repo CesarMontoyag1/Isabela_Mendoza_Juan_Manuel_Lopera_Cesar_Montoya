@@ -106,8 +106,12 @@ TAM_FP16_GB = 3.09  # Qwen2.5-1.5B en fp16 (declarado; no lo descargamos entero 
 
 md(r'''## 3. Medir ANTES (fp32 en CPU) — misma máquina que el despliegue
 
-Forzamos el generador en **CPU** (device='cpu', load_in='fp16' cae a fp32 en CPU) para aislar el
-efecto de la cuantización. Medimos latencia (3 repeticiones, mediana) y RSS pico.''')
+Forzamos el generador en **CPU** para aislar el efecto de la cuantización (no GPU vs CPU).
+
+**Nota de diseño:** fp32 en CPU es MUY lento (cada generación ~1-2 min; con HyDE son 2 por consulta).
+Medir los 18 casos tardaría ~1 h. La **latencia por consulta no depende del número de casos**, así
+que medimos el "antes" sobre un **subconjunto de N_ANTES casos** (suficiente para una mediana
+estable) y lo decimos. La versión eficiente (GGUF, rápida) sí se mide sobre todo el eval set.''')
 
 code(r'''import psutil, gc
 proc = psutil.Process(os.getpid())
@@ -115,18 +119,23 @@ def rss_mb(): return proc.memory_info().rss / 1e6
 
 from rag_core import PersonalShopper
 
-# ANTES: fp32 en CPU. Desactivamos HyDE para una latencia base manejable y medimos ambos casos.
+# ANTES: fp32 en CPU. Subconjunto pequeño para latencia (fp32-CPU es muy lento).
+N_ANTES = 6  # casos para medir el "antes"; la latencia por consulta no depende de N.
+EVAL_ANTES = EVAL_SET[:N_ANTES]
+print('Midiendo "antes" (fp32 CPU) sobre', len(EVAL_ANTES), 'casos. SIN HyDE para que sea viable.')
+
 shopper_antes = PersonalShopper(corpus_dir=CORPUS_DIR, load_in='fp16', device='cpu')
 ids_validos = set(shopper_antes.doc_ids)
-# Si no hay Gemini, el juez local fijo = este generador fp32 (el MISMO para antes y después).
 if not USAR_GEMINI:
     JUEZ = hacer_juez_mismo_generador(shopper_antes)
 
 rss0 = rss_mb()
-sc_antes, det_antes = harness(EVAL_SET, lambda q: shopper_antes.sistema(q, modo='avanzado', usar_hyde=True),
-                              JUEZ, ids_validos, nombre='Antes (fp32 CPU, con HyDE)')
-sc_antes['rss_pico_mb'] = round(rss_mb() - rss0 + rss0, 0)
+# Medimos el "antes" SIN HyDE (comparable con la versión desplegable, que también va sin HyDE).
+sc_antes, det_antes = harness(EVAL_ANTES, lambda q: shopper_antes.sistema(q, modo='avanzado', usar_hyde=False),
+                              JUEZ, ids_validos, nombre='Antes (fp32 CPU, sin HyDE)')
+sc_antes['rss_pico_mb'] = round(rss_mb(), 0)
 sc_antes['tam_disco_gb'] = TAM_FP16_GB
+sc_antes['n_casos'] = len(EVAL_ANTES)
 print(sc_antes)''')
 
 md(r'''## 4. Medir DESPUÉS (GGUF int4 en CPU) — con y sin HyDE
@@ -148,20 +157,25 @@ if not USAR_GEMINI:
 else:
     JUEZ_D = JUEZ
 
-rss0 = rss_mb()
-sc_hyde, det_hyde = harness(EVAL_SET, lambda q: shopper_gguf.sistema(q, modo='avanzado', usar_hyde=True),
-                            JUEZ_D, ids_validos, nombre='Después (GGUF int4 CPU, con HyDE)')
-sc_hyde['rss_pico_mb'] = round(rss_mb() - rss0 + rss0, 0); sc_hyde['tam_disco_gb'] = round(tam_gguf_gb, 3)
+# GGUF con HyDE: sobre el mismo subconjunto que el "antes" (comparable, y HyDE es costoso).
+sc_hyde, det_hyde = harness(EVAL_ANTES, lambda q: shopper_gguf.sistema(q, modo='avanzado', usar_hyde=True),
+                            JUEZ_D, ids_validos, nombre='Después (GGUF int4 CPU, con HyDE) [n=6]')
+sc_hyde['tam_disco_gb'] = round(tam_gguf_gb, 3); sc_hyde['n_casos'] = len(EVAL_ANTES)
 
+# GGUF SIN HyDE: la versión DESPLEGABLE. Se mide sobre TODO el eval set (es rápida).
+rss0 = rss_mb()
 sc_sin, det_sin = harness(EVAL_SET, lambda q: shopper_gguf.sistema(q, modo='avanzado', usar_hyde=False),
-                          JUEZ_D, ids_validos, nombre='Después (GGUF int4 CPU, SIN HyDE)')
+                          JUEZ_D, ids_validos, nombre='Después (GGUF int4 CPU, SIN HyDE) [n=18]')
 sc_sin['rss_pico_mb'] = round(rss_mb(), 0); sc_sin['tam_disco_gb'] = round(tam_gguf_gb, 3)
+sc_sin['n_casos'] = len(EVAL_SET)
 print(sc_hyde); print(sc_sin)''')
 
 md(r'''## 5. Tabla antes / después (misma máquina, mismo juez, memoria homogénea)''')
 
-code(r'''cols = ['sistema','D1_citacion_outfits','D2_juez_medio','D3_cumplimiento',
+code(r'''cols = ['sistema','n_casos','D1_citacion_outfits','D2_juez_medio','D3_cumplimiento',
         'latencia_p50_s','latencia_p95_s','tam_disco_gb','rss_pico_mb']
+for sc in (sc_antes, sc_hyde, sc_sin):
+    sc.setdefault('rss_pico_mb', None)
 tabla = pd.DataFrame([sc_antes, sc_hyde, sc_sin])[cols]
 os.makedirs('final/resultados', exist_ok=True)
 tabla.to_csv('final/resultados/eficiencia_antes_despues.csv', index=False, encoding='utf-8')
