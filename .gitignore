@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+final/logs/
+final/chroma_db/
+notebooks/M3/chroma_db/
+.ipynb_checkpoints/
+*.gguf

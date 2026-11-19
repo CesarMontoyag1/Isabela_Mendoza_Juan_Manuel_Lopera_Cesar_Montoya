@@ -75,10 +75,12 @@ puede tardar 2-4 min. Al final verás una línea:
 Ese es tu enlace público temporal (dura ~72 h). Ábrelo para usar la demo: escribe una petición o
 sube una foto de una prenda.''')
 
-code(r'''import sys
-sys.path.insert(0, 'final')
-# Ejecutamos app.py pero lanzando con share=True para obtener el enlace público.
-import importlib
+code(r'''import os, sys
+# Añadir final/ al path con RUTA ABSOLUTA (sin cambiar de directorio, para que las rutas al
+# corpus 'notebooks/M3' sigan siendo válidas desde la raíz del repo).
+assert os.path.isdir('final'), 'Ejecuta primero la celda del git clone + %cd.'
+sys.path.insert(0, os.path.abspath('final'))
+# La app por defecto busca el corpus en 'notebooks/M3' relativo al cwd (raíz del repo).
 import app as _app  # carga modelos al importar (tarda la primera vez)
 _app.demo.launch(share=True)''')
 

@@ -124,6 +124,8 @@ class PersonalShopper:
         self._device = device
         self._backend = "gguf" if load_in == "gguf" else "hf"
         self._log("Inicializando PersonalShopper...")
+        self.corpus_dir = self._resolver_corpus_dir()
+        self._log("corpus_dir resuelto: " + os.path.abspath(self.corpus_dir))
         self._cargar_corpus()
         self._cargar_embeddings()
         self._cargar_bm25()
@@ -137,6 +139,26 @@ class PersonalShopper:
             print("[rag_core]", *a)
 
     # ---------- carga de datos ----------
+    def _resolver_corpus_dir(self):
+        """Encuentra la carpeta que contiene corpus/corpus_look_es.csv, probando varias rutas.
+        Hace el sistema robusto tanto en el repo (notebooks/M3) como en el Space (raíz)."""
+        candidatos = [
+            self.corpus_dir,
+            os.path.join(self.corpus_dir, "..", "..", "notebooks", "M3"),
+            "notebooks/M3", ".", "corpus", "..",
+            os.path.dirname(os.path.abspath(__file__)),  # junto a este .py (caso Space)
+        ]
+        for base in candidatos:
+            if base and os.path.exists(os.path.join(base, "corpus", "corpus_look_es.csv")):
+                return base
+        # búsqueda recursiva como último recurso
+        import glob
+        hits = glob.glob("**/corpus/corpus_look_es.csv", recursive=True)
+        if hits:
+            return os.path.dirname(os.path.dirname(hits[0]))
+        raise FileNotFoundError(
+            "No encuentro corpus/corpus_look_es.csv. Revisa corpus_dir=" + str(self.corpus_dir))
+
     def _leer_csv(self, nombre):
         ruta = os.path.join(self.corpus_dir, nombre)
         with open(ruta, encoding="utf-8-sig", newline="") as f:

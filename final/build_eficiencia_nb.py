@@ -43,15 +43,18 @@ Al final de este notebook decimos si se cumplió.''')
 
 code(r'''# Dependencias (Colab). Descomenta la primera vez.
 # !pip -q install llama-cpp-python huggingface_hub chromadb sentence-transformers rank-bm25 \
-#     transformers accelerate pandas numpy
+#     transformers accelerate pandas numpy psutil
 # !git clone -b cesar https://github.com/CesarMontoyag1/Isabela_Mendoza_Juan_Manuel_Lopera_Cesar_Montoya.git
 # %cd Isabela_Mendoza_Juan_Manuel_Lopera_Cesar_Montoya
 import os, sys, time, json
 import numpy as np, pandas as pd
-sys.path.insert(0, 'final')
+# IMPORTANTE: añadir 'final' al path con RUTA ABSOLUTA, después del %cd, para que encuentre
+# rag_core y harness.
+sys.path.insert(0, os.path.abspath('final'))
 CORPUS_DIR = 'notebooks/M3'
 EVAL = 'notebooks/M3/eval/eval_set_rag.json'
-print('listo')''')
+assert os.path.isdir('final'), 'No estás en la raíz del repo. Ejecuta el %cd de arriba.'
+print('listo. final/ en path:', os.path.abspath('final'))''')
 
 md(r'''## 1. Convertir Qwen2.5-1.5B a GGUF int4
 
