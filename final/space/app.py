@@ -148,13 +148,15 @@ with gr.Blocks(title="Personal Shopper de Moda") as demo:
     hc = gr.Textbox(label="health", interactive=False)
     gr.Button("Comprobar estado").click(health, outputs=hc, api_name="health")
 
+    # Ejemplos solo de texto (sin columna de imagen, que rompía gr.Examples con None).
     gr.Examples(
         examples=[
-            ["algo elegante y minimalista para la oficina en invierno, tonos oscuros", None, "final"],
-            ["ropa de hombre estilo outdoor con pantalones cargo para el frío", None, "final"],
-            ["¿cuánto cuesta el envío a Medellín?", None, "avanzado"],
+            ["algo elegante y minimalista para la oficina en invierno, tonos oscuros"],
+            ["ropa de hombre estilo outdoor con pantalones cargo para el frío"],
+            ["un look de chica dulce y atrevida con minifalda y botas altas"],
+            ["¿cuánto cuesta el envío a Medellín?"],
         ],
-        inputs=[txt, img, modo],
+        inputs=[txt],
     )
 
 
