@@ -21,7 +21,8 @@ SPACE = os.path.join(FINAL, "space")
 BUILD = os.path.join(SPACE, "build")
 CORPUS_SRC = os.path.join(RAIZ, "notebooks", "M3", "corpus")
 
-MODULOS = ["app.py", "rag_core.py", "vision.py", "observabilidad.py", "harness.py"]
+# Módulos que vienen de final/ (lógica compartida). app.py viene de final/space/ (versión ZeroGPU).
+MODULOS_FINAL = ["rag_core.py", "vision.py", "observabilidad.py", "harness.py"]
 
 
 def main():
@@ -29,10 +30,11 @@ def main():
         shutil.rmtree(BUILD)
     os.makedirs(BUILD)
 
-    # módulos .py del sistema
-    for m in MODULOS:
+    # módulos .py del sistema (lógica compartida)
+    for m in MODULOS_FINAL:
         shutil.copy2(os.path.join(FINAL, m), os.path.join(BUILD, m))
-    # requirements y README específicos del Space
+    # app.py, requirements y README son los ESPECÍFICOS del Space (ZeroGPU)
+    shutil.copy2(os.path.join(SPACE, "app.py"), os.path.join(BUILD, "app.py"))
     shutil.copy2(os.path.join(SPACE, "requirements.txt"), os.path.join(BUILD, "requirements.txt"))
     shutil.copy2(os.path.join(SPACE, "README.md"), os.path.join(BUILD, "README.md"))
     # corpus (solo los dos CSV que usa el sistema; NO la fuente en inglés ni la caché)

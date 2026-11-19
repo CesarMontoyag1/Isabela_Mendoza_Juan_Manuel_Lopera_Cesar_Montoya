@@ -11,6 +11,10 @@ pinned: false
 license: cc-by-nc-4.0
 ---
 
+<!-- Hardware: ZeroGPU (GPU gratis por petición). El generador corre en GPU (fp16) dentro de
+     funciones @spaces.GPU. No se usa GGUF aquí (GGUF es para el experimento de eficiencia en CPU). -->
+
+
 # Personal Shopper de Moda — Demo (SI4006)
 
 Sistema RAG que recomienda outfits reales de un catálogo de moda a partir de una petición en
@@ -29,7 +33,7 @@ Botón "Comprobar estado" en la UI, o por código:
 
 ```python
 from gradio_client import Client
-print(Client("https://<usuario>-personal-shopper-moda.hf.space").predict(api_name="/health"))
+print(Client("https://CesarMontoya00-personal-shopper-moda.hf.space").predict(api_name="/health"))
 ```
 
 ## Variables de entorno (configurar como SECRETOS del Space, nunca en el repo)
