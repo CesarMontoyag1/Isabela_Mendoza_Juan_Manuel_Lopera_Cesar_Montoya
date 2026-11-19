@@ -145,10 +145,16 @@ class _FallosJuez:
         self.n = 0
 
 
-def hacer_juez_gemini(modelo="gemini-3.5-flash-lite", contador=None):
+# Modelos de juez a probar, en orden. Las cuentas nuevas solo tienen la familia 3.x; probamos
+# varios y usamos el primero que responda (evita el 404 por nombre de modelo caducado).
+MODELOS_JUEZ = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-lite-latest",
+                "gemini-flash-latest", "gemini-2.5-flash"]
+
+
+def hacer_juez_gemini(modelo=None, contador=None):
     """Juez = Gemini (modelo DISTINTO al generador) para que D2 discrimine entre sistemas.
     Requiere GEMINI_API_KEY. Devuelve None si no hay clave (entonces se usa el juez local).
-    Verifica que el modelo responde ANTES de devolver el juez (falla ruidosamente si no).
+    Prueba varios modelos y usa el PRIMERO que responde (robusto a nombres caducados).
     Lleva la cuenta de fallos en `contador` para reportarlos (no los enmascara como puntaje 3)."""
     import os
     key = os.environ.get("GEMINI_API_KEY")
@@ -158,14 +164,23 @@ def hacer_juez_gemini(modelo="gemini-3.5-flash-lite", contador=None):
     from google.genai import types
     cli = genai.Client(api_key=key)
 
-    # Verificación previa: el modelo existe y responde.
-    try:
-        _ = cli.models.generate_content(
-            model=modelo, contents="responde: ok",
-            config=types.GenerateContentConfig(temperature=0.0))
-    except Exception as e:
-        raise RuntimeError("El juez Gemini ('" + modelo + "') no responde: " + str(e) +
-                           ". Revisa GEMINI_API_KEY o el nombre del modelo.")
+    candidatos = ([modelo] if modelo else []) + [m for m in MODELOS_JUEZ if m != modelo]
+    modelo_ok, ultimo_error = None, None
+    for cand in candidatos:
+        try:
+            cli.models.generate_content(
+                model=cand, contents="responde: ok",
+                config=types.GenerateContentConfig(temperature=0.0))
+            modelo_ok = cand
+            break
+        except Exception as e:
+            ultimo_error = e
+            continue
+    if modelo_ok is None:
+        raise RuntimeError("Ningún modelo de juez Gemini respondió. Último error: " +
+                           str(ultimo_error) + ". Revisa GEMINI_API_KEY.")
+    modelo = modelo_ok
+    print("[juez] Gemini activo con modelo:", modelo)
 
     cont = contador if contador is not None else _FallosJuez()
 
