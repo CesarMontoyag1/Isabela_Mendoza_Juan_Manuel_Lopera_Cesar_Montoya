@@ -1,172 +1,103 @@
-# -*- coding: utf-8 -*-
-"""
-app.py — Interfaz web (Gradio) del personal shopper de moda. Punto de entrada del despliegue.
-
-Une las piezas de los módulos en un solo sistema usable desde una URL pública:
-  - M1/M3: `PersonalShopper` (RAG híbrida+HyDE + herramienta + generador Qwen, opcionalmente
-    cuantizado para caber en Hugging Face Spaces gratuito).
-  - M4: componente visual (BLIP) — el usuario sube una foto de una prenda y el sistema busca algo
-    parecido.
-  - M5: health check, logging estructurado en JSON y observabilidad en W&B.
-
-Cómo se ejecuta:
-  - Local / Colab:   python final/app.py
-  - Hugging Face Spaces: este archivo se llama app.py y Spaces lo ejecuta automáticamente.
-
-Variables de entorno (en Spaces se guardan como SECRETOS, nunca en el repo):
-  - RAG_LOAD_IN   : 'fp16' (def.) | 'int8' | 'int4'  -> cuantización del generador.
-  - WANDB_API_KEY : (opcional) activa la observabilidad en W&B.
-  - WANDB_PROJECT : (opcional) nombre del proyecto W&B (def. 'personal-shopper-moda').
-  - RAG_CORPUS_DIR: carpeta que contiene corpus/ y eval/ (def. 'notebooks/M3').
-"""
-
 import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+import spaces
+import json
 import gradio as gr
+import gradio_client.utils as _gc_utils
+from PIL import Image
 
-from rag_core import PersonalShopper
-from vision import VisionCaptioner
-from observabilidad import Observador, construir_evento
+_orig_schema_to_py = _gc_utils._json_schema_to_python_type
+def _safe_schema_to_py(schema, defs=None):
+    if isinstance(schema, bool):
+        return "Any" if schema else "None"
+    return _orig_schema_to_py(schema, defs)
 
+_gc_utils._json_schema_to_python_type = _safe_schema_to_py
 
-# --- Configuración desde el entorno (reproducible, sin secretos en el código) ---
-CORPUS_DIR = os.environ.get("RAG_CORPUS_DIR", "notebooks/M3")
-# En Spaces (CPU) usamos GGUF int4 por defecto: rápido en CPU y cabe en el hardware gratuito.
-LOAD_IN    = os.environ.get("RAG_LOAD_IN", "gguf")
-GGUF_REPO  = os.environ.get("RAG_GGUF_REPO", "Qwen/Qwen2.5-1.5B-Instruct-GGUF")
-GGUF_FILE  = os.environ.get("RAG_GGUF_FILE", "qwen2.5-1.5b-instruct-q4_k_m.gguf")
-WANDB_PROJECT = os.environ.get("WANDB_PROJECT", "personal-shopper-moda")
+from observability import obtener_resumen_metricas
+from pipeline import PersonalShopperOptimizado
 
-# --- Carga única de los modelos (al arrancar el Space) ---
-print("Cargando sistema (puede tardar en el primer arranque)...")
-if LOAD_IN == "gguf":
-    shopper = PersonalShopper(corpus_dir=CORPUS_DIR, load_in="gguf",
-                              gguf_repo=GGUF_REPO, gguf_file=GGUF_FILE)
-else:
-    shopper = PersonalShopper(corpus_dir=CORPUS_DIR, load_in=LOAD_IN)
-vision = VisionCaptioner()
-obs = Observador(wandb_project=WANDB_PROJECT)
+_shopper = None
 
+def get_shopper():
+    global _shopper
+    if _shopper is None:
+        _shopper = PersonalShopperOptimizado()
+    return _shopper
 
-def responder(pregunta, imagen, modo):
-    """Maneja una petición de la UI: imagen opcional -> consulta -> RAG -> respuesta + log.
-    Mide latencia extremo a extremo (visión + RAG) y captura errores sin romper la UI."""
-    import time, traceback
-    t_ini = time.perf_counter()
-    pregunta = (pregunta or "").strip()
-    con_imagen = imagen is not None
-    vision_usada = False
-    nota_visual = ""
+@spaces.GPU(duration=120)
+def procesar_consulta(texto, imagen=None):
+    shopper = get_shopper()
+    res = shopper.consultar(texto, imagen=imagen, registrar_log=True)
 
-    try:
-        if con_imagen:
-            t_v = time.perf_counter()
-            caption, consulta_img = vision.imagen_a_consulta(imagen)
-            lat_vision = time.perf_counter() - t_v
-            if consulta_img:                       # se reconoció una prenda
-                vision_usada = True
-                nota_visual = "Interpreté tu imagen como: *" + caption + "*\n\n"
-                pregunta = (pregunta + ". " + consulta_img) if pregunta else consulta_img
-            elif caption is not None:              # hay modelo pero la imagen no parece ropa
-                nota_visual = ("_No reconocí una prenda en la imagen (la vi como: " + caption +
-                               "). Respondo con tu texto si lo hay._\n\n")
-            else:                                  # no hay modelo de visión
-                nota_visual = "_(Componente visual no disponible; respondo solo con tu texto.)_\n\n"
-
-        if not pregunta:
-            return ("Escribe una petición o sube una **foto de una prenda**.", "",
-                    "sin consulta")
-
-        salida = shopper.sistema(pregunta, modo=modo)
-        salida["valvula"] = shopper.activo_valvula(salida["respuesta"]) or salida.get("valvula_pre", False)
-        lat_total = time.perf_counter() - t_ini
-
-        # Detalle de outfits (prendas reales desde los datos, no de la prosa del modelo)
-        detalle = ""
-        for oid in salida["outfits"][:3]:
-            exp = shopper.expandir_outfit(oid)
-            if not exp:
-                continue
-            prendas = "\n".join("   • " + p["titulo"] + " (" + p["color"] + ")"
-                                for p in exp["prendas"])
-            detalle += ("**" + oid + "** — " + exp["look"][:90] + "\n" + prendas + "\n\n")
-
-        # Logging estructurado + W&B (sin datos personales). 'vision' solo si se usó de verdad.
-        evento = construir_evento(pregunta, salida, modo, con_imagen=vision_usada)
-        evento["latencia_total_s"] = round(lat_total, 3)
-        evento["latencias_etapa"] = salida.get("latencias", {})
-        evento["vision_ok"] = vision_usada
-        obs.registrar(evento)
-
-        respuesta_md = nota_visual + salida["respuesta"]
-        meta = ("Modo: " + modo + " | herramienta: " +
-                ("sí " + str(salida["filtro"]) if salida["uso_herramienta"] else "no") +
-                " | latencia total: " + str(round(lat_total, 2)) + " s" +
-                (" | VÁLVULA activada" if salida["valvula"] else ""))
-        return respuesta_md, (detalle or "_(sin outfits para mostrar)_"), meta
-
-    except Exception as e:
-        traceback.print_exc()
-        try:
-            obs.registrar({"ts": "", "modo": modo, "error": str(e)[:200],
-                           "latencia_s": round(time.perf_counter() - t_ini, 3)})
-        except Exception:
-            pass
-        return ("Ocurrió un error procesando tu petición. Intenta de nuevo con otra consulta.",
-                "", "error: " + str(e)[:120])
+    traza = {
+        "latencia_s": round(res["latencia_s"], 3),
+        "cache_hit": res["cache_hit"],
+        "valvula_activada": res["valvula_activada"],
+        "perfil_extraido_M1": res["perfil_m1"],
+        "analisis_visual_M4": res["info_visual"],
+        "filtros_catalogo_M3": res["filtro"],
+        "outfits_citables": res["outfits"],
+    }
+    return res["respuesta"], json.dumps(traza, ensure_ascii=False, indent=2)
 
 
-def health():
-    """Health check: estado del sistema sin hacer una pregunta real."""
-    import json
-    return json.dumps(shopper.health_check(), ensure_ascii=False, indent=2)
+def ver_salud_y_observabilidad():
+    if _shopper is None:
+        salud = {
+            "status": "ready (lazy-init on first GPU request)",
+            "device": "zerogpu (cuda on demand)",
+            "catalog_outfits": 800,
+        }
+    else:
+        salud = _shopper.health_check()
+    metricas = obtener_resumen_metricas(ultimos_n=100)
+    return json.dumps(salud, ensure_ascii=False, indent=2), json.dumps(metricas, ensure_ascii=False, indent=2)
 
 
-# --- UI ---
-with gr.Blocks(title="Personal Shopper de Moda") as demo:
+with gr.Blocks(title="Personal Shopper Multimodal IA", theme=gr.themes.Soft()) as demo:
     gr.Markdown(
-        "# 👗 Personal Shopper de Moda\n"
-        "Pídeme un outfit con tus palabras (o **sube una foto** de una prenda) y te recomiendo "
-        "conjuntos **reales del catálogo**. Si preguntas algo que no está en el catálogo "
-        "(precios, envíos, tallas), te lo digo en vez de inventar.\n\n"
-        "> ⚠️ **Es una sugerencia, no una garantía.** El catálogo no tiene precios, tallas "
-        "numéricas ni envíos. 🔒 **Privacidad:** si subes una foto, se procesa solo para esta "
-        "recomendación y **no se guarda**; los registros solo almacenan métricas (latencia, si se "
-        "usó la herramienta), nunca tu texto ni tu imagen."
-    )
-    with gr.Row():
-        with gr.Column(scale=3):
-            txt = gr.Textbox(label="¿Qué buscas?",
-                             placeholder="Ej: algo elegante y abrigado para una boda en invierno")
-            img = gr.Image(label="O sube una foto de una prenda (opcional)", type="pil")
-            modo = gr.Radio(["final", "avanzado", "ingenuo", "baseline"], value="avanzado",
-                            label="Versión del sistema",
-                            info="avanzado = híbrida+HyDE; final = + herramienta de filtro")
-            btn = gr.Button("Recomiéndame", variant="primary")
-        with gr.Column(scale=4):
-            out_resp = gr.Markdown(label="Recomendación")
-            out_det = gr.Markdown(label="Prendas de los outfits recomendados")
-            out_meta = gr.Textbox(label="Trazabilidad de la petición", interactive=False)
-
-    btn.click(responder, inputs=[txt, img, modo], outputs=[out_resp, out_det, out_meta])
-
-    gr.Markdown("---\n### Estado del sistema (health check)\n"
-                "Se expone como API con nombre `health`. Desde código:\n"
-                "`from gradio_client import Client; "
-                "print(Client('<url-del-space>').predict(api_name='/health'))`")
-    hc = gr.Textbox(label="health", interactive=False)
-    gr.Button("Comprobar estado").click(health, outputs=hc, api_name="health")
-
-    gr.Examples(
-        examples=[
-            ["algo elegante y minimalista para la oficina en invierno, tonos oscuros", None, "final"],
-            ["ropa de hombre estilo outdoor con pantalones cargo para el frío", None, "final"],
-            ["¿cuánto cuesta el envío a Medellín?", None, "avanzado"],
-        ],
-        inputs=[txt, img, modo],
+        "# Personal Shopper Multimodal (M1 + M3 + M4 + M5)\n"
+        "Asistente de moda con extracción de perfil LoRA (`Qwen2.5-1.5B`), recuperación híbrida "
+        "(`BM25 + e5-small + HyDE`) y percepción visual (`Qwen2-VL-2B`)."
     )
 
+    with gr.Tab("Asistente Personal Shopper"):
+        with gr.Row():
+            with gr.Column(scale=1):
+                inp_txt = gr.Textbox(
+                    label="¿Qué estás buscando hoy?",
+                    placeholder="Ej: Busco un outfit casual y cómodo para clima cálido de fin de semana...",
+                    lines=3,
+                )
+                inp_img = gr.Image(label="Imagen de referencia opcional (prenda o estilo)", type="pil")
+                btn_enviar = gr.Button("Recomendar Outfits", variant="primary")
+
+                gr.Examples(
+                    examples=[
+                        ["Necesito un outfit formal de hombre para una reunión de trabajo en clima frío.", None],
+                        ["Busco un look casual y holgado de mujer para viajar en verano.", None],
+                        ["¿Cuánto cuesta el envío a Medellín y qué tallas tienen?", None],
+                    ],
+                    inputs=[inp_txt, inp_img],
+                )
+
+            with gr.Column(scale=1):
+                out_resp = gr.Textbox(label="Recomendación del Personal Shopper", lines=8)
+                out_traza = gr.Code(label="Traza del Sistema (M1 Perfil + M4 Visión + M3 Filtros)", language="json")
+
+        btn_enviar.click(fn=procesar_consulta, inputs=[inp_txt, inp_img], outputs=[out_resp, out_traza])
+
+    with gr.Tab("Health Check & Observabilidad"):
+        gr.Markdown("Estado del servicio y métricas estructuradas en tiempo real (sin almacenamiento de PII).")
+        btn_refresh = gr.Button("Actualizar Estado y Métricas")
+        with gr.Row():
+            out_health = gr.Code(label="Endpoint /health", language="json")
+            out_obs = gr.Code(label="Logs Estructurados (p50 / p95 / tasas)", language="json")
+
+        btn_refresh.click(fn=ver_salud_y_observabilidad, inputs=[], outputs=[out_health, out_obs])
+        demo.load(fn=ver_salud_y_observabilidad, inputs=[], outputs=[out_health, out_obs])
 
 if __name__ == "__main__":
-    # Cola con concurrencia 1: llama.cpp no es seguro con llamadas concurrentes al mismo contexto.
-    demo.queue(max_size=16, default_concurrency_limit=1)
-    demo.launch()
+    demo.launch(ssr_mode=False)

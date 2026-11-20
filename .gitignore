@@ -7,3 +7,5 @@ notebooks/M3/chroma_db/
 *.gguf
 final/space/build/
 chroma_db_m4/
+final/chroma_db_final/
+**/__pycache__/

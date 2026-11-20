@@ -100,6 +100,27 @@ no sustentados). Resultados en `notebooks/M3/resultados/`.
 
 ---
 
+## M5 — Despliegue observado
+
+**Qué hace:** empaqueta el sistema en `final/` (app Gradio + health check), aplica cuantización
+**GGUF int4** al generador para correr en CPU y deja trazabilidad de lo que pasa en producción.
+
+- **Logging estructurado:** cada petición escribe una línea JSON en `final/logs/peticiones.jsonl`
+  con hora, latencia total y por etapas, componentes usados (RAG, herramienta, visión), válvula y
+  métricas de uso. **Sin datos personales:** nunca se guarda el texto ni la imagen, solo la longitud
+  y un hash corto de la pregunta.
+- **Observabilidad en MLflow:** si se define `MLFLOW_TRACKING_URI`, cada petición se registra como
+  métrica (`latencia_s`, `latencia_total_s`, latencias por etapa, `peticiones_totales`,
+  `tasa_herramienta`, `tasa_valvula`, `tasa_error`, ...) en una run de serving del experimento
+  `MLFLOW_EXPERIMENT_NAME` (def. `personal-shopper-moda`). Si no hay URI, el sistema sigue
+  funcionando y solo escribe el log local. Las credenciales del servidor se pasan como secretos
+  del entorno (`MLFLOW_TRACKING_TOKEN` / `MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD`),
+  nunca en el repositorio.
+- Evaluación y eficiencia: el mismo harness del M2 mide calidad y latencias p50/p95 antes/después
+  de la cuantización (`final/eficiencia.ipynb`).
+
+---
+
 ## Estructura del repositorio
 
 ```
@@ -110,6 +131,7 @@ no sustentados). Resultados en `notebooks/M3/resultados/`.
 │   ├── M1/                     # tokenización + fine-tuning LoRA
 │   ├── M2/                     # harness de evaluación + README
 │   └── M3/                     # sistema RAG agéntico + README (reporte) + resultados
+├── final/                      # M5: app Gradio, RAG, visión, logging y MLflow + Space
 └── README.md                   # este archivo
 ```
 

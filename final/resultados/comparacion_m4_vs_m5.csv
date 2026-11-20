@@ -1,0 +1,3 @@
+sistema,n_casos,D1_citacion,D2_juez,D3_cumplimiento,latencia_p50_s,latencia_p95_s,vram_max_gb
+Antes — M4 Completo (FP16 sin optimizar),18,0.833,3.889,0.722,10.476,16.837,12.45
+Después — M5 Optimizado (4-bit NF4 + HyDE estructurado),18,0.75,3.611,0.611,11.375,16.319,3.22
