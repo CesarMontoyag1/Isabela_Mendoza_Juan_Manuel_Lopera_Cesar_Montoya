@@ -186,7 +186,7 @@ class PersonalShopperOptimizado:
                 embeddings=embs,
                 metadatas=self.metadatos[sl],
             )
-
+        self.docs_by_id = dict(zip(self.doc_ids, self.documentos))
         self.bm25 = BM25Okapi([re.findall(r"\w+", d.lower()) for d in self.documentos])
 
     def _cargar_modelos(self):
@@ -501,18 +501,28 @@ class PersonalShopperOptimizado:
             finalistas = self._rrf([densos, lexicos, hyde_densos], top=TOP_K) or self._buscar_denso(consulta_enr, k=TOP_K)
             contextos = [d for _, d in finalistas]
 
-            # 4. Generación Final Concisa (máx. 115 tokens)
+            # 4. Generación Final con descripción explícita + ficha exacta del catálogo
             ctx_txt = "\n\n".join(contextos) if contextos else "(sin resultados)"
             prompt_final = (
                 f"PERFIL: {json.dumps(perfil_m1, ensure_ascii=False)}\n\n"
                 f"CONTEXTO (outfits):\n{ctx_txt}\n\n"
                 f"PREGUNTA: {consulta_enr}\n\n"
-                "Responde en máximo 2 oraciones breves: recomienda los outfits del contexto que mejor encajen "
-                "citando sus IDs (ej. B_b12) y explica por qué. Usa la válvula de escape SOLO si preguntan "
-                "por precios, envíos, tallas numéricas o políticas de devolución."
+                "Responde en español de forma clara y concreta: recomienda los 2 outfits del contexto que mejor "
+                "encajen citando su ID y el nombre del look (ej. C_b102 - Nombre del look), menciona las prendas "
+                "principales que incluyen y explica brevemente por qué combinan con lo pedido. "
+                "Usa la válvula de escape SOLO si preguntan por precios, envíos, tallas numéricas o devoluciones."
             )
-            respuesta = self._generar_base(SYSTEM_PROMPT_M3, prompt_final, max_tokens=115)
+            respuesta = self._generar_base(SYSTEM_PROMPT_M3, prompt_final, max_tokens=220)
             valvula_act = VALVULA.lower() in respuesta.lower()
+
+            if not valvula_act and finalistas:
+                citados = [oid for oid, _ in finalistas if oid in respuesta]
+                if not citados:
+                    citados = [oid for oid, _ in finalistas[:2]]
+                fichas = "\n\n".join(self.docs_by_id[oid] for oid in citados if oid in self.docs_by_id)
+                if fichas:
+                    respuesta = f"{respuesta}\n\n--- Detalle de los outfits recomendados ---\n{fichas}"
+
             lat = time.time() - t0
 
             salida = {
