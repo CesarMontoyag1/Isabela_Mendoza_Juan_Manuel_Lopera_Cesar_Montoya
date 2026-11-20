@@ -138,11 +138,12 @@ sc_antes['tam_disco_gb'] = TAM_FP16_GB
 sc_antes['n_casos'] = len(EVAL_ANTES)
 print(sc_antes)''')
 
-md(r'''## 4. Medir DESPUÉS (GGUF int4 en CPU) — con y sin HyDE
+md(r'''## 4. Medir DESPUÉS (GGUF int4 en CPU) — versión desplegable (sin HyDE)
 
-Medimos la versión eficiente en dos configuraciones: con HyDE (equivalente al "antes") y **sin HyDE**
-(la que proponemos desplegar, porque HyDE duplica las generaciones y la ablación de M3 mostró que
-aporta poco). Esto también cumple la **ablación obligatoria** del enunciado.''')
+Medimos la versión eficiente **sin HyDE**, que es la que se despliega (HyDE duplica las
+generaciones y la ablación del M3 mostró que aporta poco; en CPU su costo no compensa). La
+comparación "antes" (fp32-CPU sin HyDE) vs "después" (GGUF-CPU sin HyDE) aísla el efecto de la
+**cuantización** con todo lo demás igual.''')
 
 code(r'''del shopper_antes; gc.collect()
 
@@ -157,26 +158,22 @@ if not USAR_GEMINI:
 else:
     JUEZ_D = JUEZ
 
-# GGUF con HyDE: sobre el mismo subconjunto que el "antes" (comparable, y HyDE es costoso).
-sc_hyde, det_hyde = harness(EVAL_ANTES, lambda q: shopper_gguf.sistema(q, modo='avanzado', usar_hyde=True),
-                            JUEZ_D, ids_validos, nombre='Después (GGUF int4 CPU, con HyDE) [n=6]')
-sc_hyde['tam_disco_gb'] = round(tam_gguf_gb, 3); sc_hyde['n_casos'] = len(EVAL_ANTES)
-
-# GGUF SIN HyDE: la versión DESPLEGABLE. Se mide sobre TODO el eval set (es rápida).
+# GGUF SIN HyDE: la versión DESPLEGABLE. Sobre el mismo subconjunto que el "antes" (comparación
+# directa fp32-CPU vs GGUF-CPU, ambos sin HyDE) y sin la variante con HyDE que disparaba la latencia.
 rss0 = rss_mb()
-sc_sin, det_sin = harness(EVAL_SET, lambda q: shopper_gguf.sistema(q, modo='avanzado', usar_hyde=False),
-                          JUEZ_D, ids_validos, nombre='Después (GGUF int4 CPU, SIN HyDE) [n=18]')
+sc_sin, det_sin = harness(EVAL_ANTES, lambda q: shopper_gguf.sistema(q, modo='avanzado', usar_hyde=False),
+                          JUEZ_D, ids_validos, nombre='Después (GGUF int4 CPU, sin HyDE)')
 sc_sin['rss_pico_mb'] = round(rss_mb(), 0); sc_sin['tam_disco_gb'] = round(tam_gguf_gb, 3)
-sc_sin['n_casos'] = len(EVAL_SET)
-print(sc_hyde); print(sc_sin)''')
+sc_sin['n_casos'] = len(EVAL_ANTES)
+print(sc_sin)''')
 
 md(r'''## 5. Tabla antes / después (misma máquina, mismo juez, memoria homogénea)''')
 
 code(r'''cols = ['sistema','n_casos','D1_citacion_outfits','D2_juez_medio','D3_cumplimiento',
         'latencia_p50_s','latencia_p95_s','tam_disco_gb','rss_pico_mb']
-for sc in (sc_antes, sc_hyde, sc_sin):
+for sc in (sc_antes, sc_sin):
     sc.setdefault('rss_pico_mb', None)
-tabla = pd.DataFrame([sc_antes, sc_hyde, sc_sin])[cols]
+tabla = pd.DataFrame([sc_antes, sc_sin])[cols]
 os.makedirs('final/resultados', exist_ok=True)
 tabla.to_csv('final/resultados/eficiencia_antes_despues.csv', index=False, encoding='utf-8')
 print('Guardado: final/resultados/eficiencia_antes_despues.csv')
@@ -194,8 +191,9 @@ code(r'''def latencias_etapa(shopper, hyde):
         for k, v in (s.get('latencias') or {}).items():
             acc.setdefault(k, []).append(v)
     return {k: round(float(np.median(v)), 2) for k, v in acc.items()}
-print('GGUF con HyDE  (mediana por etapa, s):', latencias_etapa(shopper_gguf, True))
-print('GGUF sin HyDE  (mediana por etapa, s):', latencias_etapa(shopper_gguf, False))''')
+print('GGUF sin HyDE  (mediana por etapa, s):', latencias_etapa(shopper_gguf, False))
+# Nota: la variante con HyDE se descartó por costo de latencia en CPU (y la ablación de HyDE
+# ya está medida en el Módulo 3). El sistema desplegado va sin HyDE.''')
 
 md(r'''## 7. Pruebas que NO miden exactitud (sobre la versión eficiente)
 

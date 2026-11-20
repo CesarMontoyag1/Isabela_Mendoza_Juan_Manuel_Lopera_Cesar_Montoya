@@ -323,8 +323,8 @@ class PersonalShopper:
         if self.gguf_repo:
             from huggingface_hub import hf_hub_download
             ruta = hf_hub_download(repo_id=self.gguf_repo, filename=self.gguf_file)
-        # n_ctx=2048 basta (el prompt trae top-5 outfits); seed fijo para reproducibilidad.
-        self.llm = Llama(model_path=ruta, n_ctx=2048, n_threads=os.cpu_count() or 4,
+        # n_ctx=4096: el prompt con top-5 outfits (y HyDE si se activa) puede pasar de 2048 tokens.
+        self.llm = Llama(model_path=ruta, n_ctx=4096, n_threads=os.cpu_count() or 4,
                          n_batch=512, seed=SEED, verbose=False, chat_format="qwen")
         self.gen_tok = None
         self._log("Generador GGUF cargado: " + str(ruta))

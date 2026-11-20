@@ -14,6 +14,28 @@ Variables de entorno (SECRETOS del Space, nunca en el repo):
 """
 
 import os
+
+# --- PARCHE del bug de gradio_client: "TypeError: argument of type 'bool' is not iterable" ---
+# En get_api_info(), gradio_client.utils.get_type recibe a veces un esquema booleano (True/False
+# en additionalProperties) y hace `if "const" in schema`, que revienta. Lo parcheamos para que
+# tolere esquemas que no son dict. (Bug conocido con Gradio + ZeroGPU.)
+import gradio_client.utils as _gcu
+
+_orig_get_type = _gcu.get_type
+def _safe_get_type(schema):
+    if not isinstance(schema, dict):
+        return "Any"
+    return _orig_get_type(schema)
+_gcu.get_type = _safe_get_type
+
+_orig_j2p = _gcu._json_schema_to_python_type
+def _safe_j2p(schema, defs=None):
+    if not isinstance(schema, dict):
+        return "Any"
+    return _orig_j2p(schema, defs)
+_gcu._json_schema_to_python_type = _safe_j2p
+# --- fin del parche ---
+
 import gradio as gr
 
 try:
@@ -166,4 +188,5 @@ with gr.Blocks(title="Personal Shopper de Moda") as demo:
 demo.queue(max_size=16, default_concurrency_limit=1)
 
 if __name__ == "__main__":
-    demo.launch()
+    # ssr_mode=False: el SSR de Gradio 5 causa "No API found" en Spaces; lo desactivamos.
+    demo.launch(ssr_mode=False)
