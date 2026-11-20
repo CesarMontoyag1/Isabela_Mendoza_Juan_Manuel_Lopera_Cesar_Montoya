@@ -308,12 +308,18 @@ class PersonalShopper:
                 self._log(f"No se pudo cuantizar ({e}); usando fp16/fp32.")
                 kwargs = {}
         if "quantization_config" not in kwargs:
-            kwargs["torch_dtype"] = "auto"
             if self._device == "cuda":
+                kwargs["torch_dtype"] = "auto"
                 kwargs["device_map"] = "cuda"
+            else:
+                # En CPU: fp16 no está acelerado y puede dar NaN/lentitud. fp32 es lo estable y
+                # representa el "antes" (sistema del M4) corriendo en la misma máquina (CPU) que el
+                # GGUF. load_in='fp16' en CPU se trata como fp32 a propósito.
+                kwargs["torch_dtype"] = torch.float32
         self.gen_model = AutoModelForCausalLM.from_pretrained(self.gen_model_name, **kwargs)
         self.gen_model.eval()
-        self._log(f"Generador {self.gen_model_name} cargado (load_in={self.load_in}).")
+        self._log(f"Generador {self.gen_model_name} cargado (load_in={self.load_in}, device={self._device}, "
+                  f"dtype={next(self.gen_model.parameters()).dtype}).")
 
     def _cargar_generador_gguf(self):
         """Carga el generador cuantizado en GGUF con llama-cpp-python (rápido en CPU).
