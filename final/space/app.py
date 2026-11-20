@@ -109,11 +109,14 @@ def responder(pregunta, imagen, modo):
                 "", "error: " + str(e)[:120])
 
 
-@spaces.GPU(duration=60)
 def health():
+    """Health check (no necesita GPU). Si los modelos aún no se cargaron, lo indica."""
     import json
-    shopper, _ = _asegurar_cargado()
-    return json.dumps(shopper.health_check(), ensure_ascii=False, indent=2)
+    if _sistema["shopper"] is None:
+        return json.dumps({"status": "idle",
+                           "detalle": "modelos aún no cargados; haz una consulta para inicializar"},
+                          ensure_ascii=False, indent=2)
+    return json.dumps(_sistema["shopper"].health_check(), ensure_ascii=False, indent=2)
 
 
 with gr.Blocks(title="Personal Shopper de Moda") as demo:
@@ -160,8 +163,7 @@ with gr.Blocks(title="Personal Shopper de Moda") as demo:
     )
 
 
+demo.queue(max_size=16, default_concurrency_limit=1)
+
 if __name__ == "__main__":
-    demo.queue(max_size=16, default_concurrency_limit=1)
-    # show_api=False evita el bug de get_api_info ('bool is not iterable') en gradio 4.44.x.
-    # El health check sigue disponible por el botón de la UI.
-    demo.launch(show_api=False)
+    demo.launch()

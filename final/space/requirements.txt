@@ -1,15 +1,17 @@
 # Dependencias del Space en Hugging Face ZeroGPU (GPU gratis por petición).
 # torch debe ser una versión soportada por ZeroGPU (2.8.0+).
+# Usamos rangos (no pines exactos) para que pip resuelva un conjunto coherente con Gradio 5,
+# que exige huggingface_hub>=0.25.1.
 spaces
 torch==2.8.0
-gradio==5.9.1
-chromadb==0.5.5
-sentence-transformers==3.0.1
+gradio==5.5.0
+chromadb>=0.5.5,<0.6
+sentence-transformers>=3.1.0,<4.0
 rank-bm25==0.2.2
-transformers==4.44.2
-accelerate==0.33.0
-pillow==10.4.0
-numpy==1.26.4
-pandas==2.2.2
-wandb==0.17.8
-huggingface_hub==0.24.6
+transformers>=4.45.0,<4.49
+accelerate>=0.34.0
+pillow>=10.4.0
+numpy>=1.26.4,<2.0
+pandas>=2.2.0
+wandb>=0.17.8
+huggingface_hub>=0.25.1,<1.0
