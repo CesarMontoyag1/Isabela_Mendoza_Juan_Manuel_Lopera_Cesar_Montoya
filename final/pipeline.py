@@ -59,18 +59,13 @@ SYSTEM_PROMPT_M1 = (
 )
 
 VISUAL_SYSTEM_PROMPT = (
-    "Eres el módulo de visión de un personal shopper de moda. Analiza la imagen proporcionada y "
-    "responde ÚNICAMENTE con un objeto JSON válido con esta estructura exacta:\n"
-    "{\n"
-    '  "es_moda": true o false,\n'
-    '  "genero_aparente": "De mujer" | "De hombre" | "Unisex" | null,\n'
-    '  "clima_sugerido": "frio" | "calido" | "templado" | null,\n'
-    '  "descripcion": "descripción breve en español de las prendas, colores, corte/fit y estilo visibles"\n'
-    "}\n\n"
-    "REGLA ESTRICTA: Si la imagen NO muestra ropa, prendas de vestir, calzado, accesorios de moda "
-    "o un outfit de una persona (por ejemplo, si muestra autos, comida, animales, paisajes, gráficos, "
-    'documentos o ruido), devuelve {"es_moda": false, "genero_aparente": null, "clima_sugerido": null, '
-    '"descripcion": "OUT_OF_DOMAIN"}. No inventes prendas.'
+    "Eres el módulo de visión de un personal shopper de moda. Analiza la imagen y responde "
+    "ÚNICAMENTE con un JSON válido:\n"
+    '{"es_moda": true/false, "genero_aparente": "De mujer"|"De hombre"|"Unisex"|null, '
+    '"clima_sugerido": "frio"|"calido"|"templado"|null, '
+    '"descripcion": "máximo 12 palabras con prenda, color, corte y estilo"}\n'
+    "Si NO muestra ropa, calzado o accesorios de moda (ej. autos, comida, gráficos, ruido), "
+    'devuelve {"es_moda": false, "genero_aparente": null, "clima_sugerido": null, "descripcion": "OUT_OF_DOMAIN"}.'
 )
 
 SYSTEM_PROMPT_M3 = (
@@ -213,6 +208,7 @@ class PersonalShopperOptimizado:
             self.gen_tok.pad_token = self.gen_tok.eos_token
 
         if self.usar_4bit:
+            # Técnica exigida por rúbrica: Cuantización int4 (NF4) con bitsandbytes + atención SDPA
             bnb_cfg = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",
@@ -222,22 +218,24 @@ class PersonalShopperOptimizado:
             base_gen = AutoModelForCausalLM.from_pretrained(
                 GEN_MODEL_ID,
                 quantization_config=bnb_cfg,
+                attn_implementation="sdpa",
                 device_map="auto",
             )
             vis_model = Qwen2VLForConditionalGeneration.from_pretrained(
                 VIS_MODEL_ID,
                 quantization_config=bnb_cfg,
+                attn_implementation="sdpa",
                 device_map="auto",
             )
         elif self.device == "cuda":
             base_gen = AutoModelForCausalLM.from_pretrained(
-                GEN_MODEL_ID, torch_dtype=torch.float16
+                GEN_MODEL_ID, torch_dtype=torch.float16, attn_implementation="sdpa"
             ).to(self.device)
             vis_model = Qwen2VLForConditionalGeneration.from_pretrained(
-                VIS_MODEL_ID, torch_dtype=torch.float16
+                VIS_MODEL_ID, torch_dtype=torch.float16, attn_implementation="sdpa"
             ).to(self.device)
         else:
-            # Modo CPU para Hugging Face Spaces gratuito (sin GPU)
+            # Modo CPU para Hugging Face Spaces gratuito
             torch.set_num_threads(max(1, os.cpu_count() or 2))
             base_gen = AutoModelForCausalLM.from_pretrained(
                 GEN_MODEL_ID, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True
@@ -254,11 +252,11 @@ class PersonalShopperOptimizado:
             self.tiene_lora = False
 
         self.gen_model.eval()
-        # Presupuesto visual optimizado (384*28*28 vs 512*28*28 en M4): -44% tokens visuales
+        # Presupuesto visual equilibrado (448*28*28): conserva bordes en recortes y ahorra tokens vs M4 (512)
         self.vis_processor = AutoProcessor.from_pretrained(
             VIS_MODEL_ID,
-            min_pixels=196 * 28 * 28,
-            max_pixels=384 * 28 * 28,
+            min_pixels=224 * 28 * 28,
+            max_pixels=448 * 28 * 28,
         )
         self.vis_model = vis_model
         self.vis_model.eval()
@@ -273,7 +271,7 @@ class PersonalShopperOptimizado:
 
         out = self.vis_model.generate(
             **inputs,
-            max_new_tokens=110,
+            max_new_tokens=75,
             do_sample=False,
             use_cache=True,
             pad_token_id=self.vis_processor.tokenizer.eos_token_id,
@@ -286,7 +284,7 @@ class PersonalShopperOptimizado:
                 "es_moda": not es_ood,
                 "genero_aparente": None,
                 "clima_sugerido": None,
-                "descripcion": "OUT_OF_DOMAIN" if es_ood else raw[:180],
+                "descripcion": "OUT_OF_DOMAIN" if es_ood else raw[:140],
             }
         return {
             "es_moda": bool(parsed.get("es_moda", False)),
@@ -301,7 +299,7 @@ class PersonalShopperOptimizado:
         prompt = self.gen_tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
         inputs = self.gen_tok(prompt, return_tensors="pt").to(self.device)
         out = self.gen_model.generate(
-            **inputs, max_new_tokens=72, do_sample=False, use_cache=True, pad_token_id=self.gen_tok.eos_token_id
+            **inputs, max_new_tokens=48, do_sample=False, use_cache=True, pad_token_id=self.gen_tok.eos_token_id
         )
         raw = self.gen_tok.decode(out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True).strip()
         obj = parse_json_seguro(raw)
@@ -456,31 +454,31 @@ class PersonalShopperOptimizado:
             densos = [(i, d) for i, d in self._buscar_denso(consulta_enr, k=pool * 3) if i in sub_ids][:pool]
             lexicos = self._buscar_bm25(consulta_enr, k=pool, candidatos_idx=idx_validos)
 
-            # Optimización de latencia: si M1 extrajo >=2 atributos, sintetiza HyDE sin llamada extra al LLM
-            if len(perfil_m1) >= 2:
+            # HyDE determinista con atributos M1: evita 1 llamada autoregresiva extra del LLM cuantizado
+            if perfil_m1:
                 hip = (
-                    f"Outfit de estilo {perfil_m1.get('estilo', 'casual')} para {perfil_m1.get('ocasion', 'uso diario')}, "
-                    f"clima {perfil_m1.get('clima', 'templado')}, paleta {perfil_m1.get('paleta', 'neutra')} "
-                    f"y corte {perfil_m1.get('fit', 'regular')}. {consulta_enr}"
+                    f"Outfit {perfil_m1.get('estilo', 'casual')} para {perfil_m1.get('ocasion', 'uso diario')}, "
+                    f"clima {perfil_m1.get('clima', 'templado')}, paleta {perfil_m1.get('paleta', 'neutra')}, "
+                    f"corte {perfil_m1.get('fit', 'regular')}. {consulta_enr}"
                 )
             else:
-                hip = self._generar_base(HYDE_SYS, f"Petición: {consulta_enr}\nDescripción del outfit ideal:", max_tokens=80)
+                hip = f"Conjunto de ropa y prendas del catálogo para: {consulta_enr}"
 
             hyde_densos = [(i, d) for i, d in self._buscar_denso(hip, k=pool * 3) if i in sub_ids][:pool]
             finalistas = self._rrf([densos, lexicos, hyde_densos], top=TOP_K) or self._buscar_denso(consulta_enr, k=TOP_K)
             contextos = [d for _, d in finalistas]
 
-            # 4. Generación Final M3
+            # 4. Generación Final Concisa (máx. 115 tokens)
             ctx_txt = "\n\n".join(contextos) if contextos else "(sin resultados)"
             prompt_final = (
-                f"PERFIL DE ESTILO DETECTADO: {json.dumps(perfil_m1, ensure_ascii=False)}\n\n"
-                f"CONTEXTO (outfits del catálogo):\n{ctx_txt}\n\n"
-                f"PREGUNTA DEL CLIENTE: {consulta_enr}\n\n"
-                "El contexto SÍ trae outfits: recomiéndale al cliente el o los que mejor encajen y "
-                "cita sus identificadores. Explica en 1-2 frases por qué encaja. Solo usa la válvula de escape "
-                "si la pregunta es de precio, envío, talla numérica o políticas de la tienda."
+                f"PERFIL: {json.dumps(perfil_m1, ensure_ascii=False)}\n\n"
+                f"CONTEXTO (outfits):\n{ctx_txt}\n\n"
+                f"PREGUNTA: {consulta_enr}\n\n"
+                "Responde en máximo 2 oraciones breves: recomienda los outfits del contexto que mejor encajen "
+                "citando sus IDs (ej. B_b12) y explica por qué. Usa la válvula de escape SOLO si preguntan "
+                "por precios, envíos, tallas numéricas o políticas de devolución."
             )
-            respuesta = self._generar_base(SYSTEM_PROMPT_M3, prompt_final, max_tokens=240)
+            respuesta = self._generar_base(SYSTEM_PROMPT_M3, prompt_final, max_tokens=115)
             valvula_act = VALVULA.lower() in respuesta.lower()
             lat = time.time() - t0
 
