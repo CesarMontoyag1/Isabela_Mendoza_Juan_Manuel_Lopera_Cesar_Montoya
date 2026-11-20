@@ -144,9 +144,9 @@ with gr.Blocks(title="Personal Shopper de Moda") as demo:
     btn.click(responder, inputs=[txt, img, modo], outputs=[out_resp, out_det, out_meta])
 
     gr.Markdown("---\n### Estado del sistema (health check)\n"
-                "Se expone como API con nombre `health`.")
+                "Botón que comprueba que el índice responde y el generador está cargado.")
     hc = gr.Textbox(label="health", interactive=False)
-    gr.Button("Comprobar estado").click(health, outputs=hc, api_name="health")
+    gr.Button("Comprobar estado").click(health, outputs=hc)
 
     # Ejemplos solo de texto (sin columna de imagen, que rompía gr.Examples con None).
     gr.Examples(
@@ -162,4 +162,6 @@ with gr.Blocks(title="Personal Shopper de Moda") as demo:
 
 if __name__ == "__main__":
     demo.queue(max_size=16, default_concurrency_limit=1)
-    demo.launch()
+    # show_api=False evita el bug de get_api_info ('bool is not iterable') en gradio 4.44.x.
+    # El health check sigue disponible por el botón de la UI.
+    demo.launch(show_api=False)
