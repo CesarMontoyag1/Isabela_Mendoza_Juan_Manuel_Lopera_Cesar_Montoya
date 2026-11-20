@@ -54,8 +54,10 @@ def main():
 2) Clona el Space:  git clone https://huggingface.co/spaces/<usuario>/personal-shopper-moda
 3) Copia TODO el contenido de esta carpeta build/ dentro del repo del Space.
 4) git add . && git commit -m "deploy" && git push
-5) En el Space -> Settings -> Variables and secrets: añade WANDB_API_KEY (y GEMINI_API_KEY si
-   usas Gemini). RAG_LOAD_IN=gguf y RAG_USAR_HYDE=0 ya son los valores por defecto.
+5) En el Space -> Settings -> Variables and secrets: añade MLFLOW_TRACKING_URI (y
+   MLFLOW_TRACKING_TOKEN si el servidor lo pide; GEMINI_API_KEY si usas Gemini). Sin
+   MLFLOW_TRACKING_URI el Space sigue funcionando y solo escribe el log JSON local.
+   MLFLOW_EXPERIMENT_NAME=personal-shopper-moda y RAG_USAR_HYDE=0 son los valores por defecto.
 El Space construirá el entorno y arrancará app.py automáticamente.
 """)
 

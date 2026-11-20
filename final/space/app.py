@@ -7,12 +7,14 @@ ZeroGPU asigna GPU por petición solo dentro de funciones decoradas con @spaces.
   - La función que genera la recomendación va decorada con @spaces.GPU.
   - Los modelos se cargan de forma perezosa en la primera llamada (dentro del contexto GPU).
 
-Une M1/M3 (RAG), M4 (visión BLIP) y M5 (health, logging, W&B). Punto de entrada del Space.
+Une M1/M3 (RAG), M4 (visión BLIP) y M5 (health, logging, MLflow). Punto de entrada del Space.
 
 Variables de entorno (SECRETOS del Space, nunca en el repo):
-  WANDB_API_KEY, WANDB_PROJECT, GEMINI_API_KEY (opcional), RAG_USAR_HYDE (def. '0').
+  MLFLOW_TRACKING_URI, MLFLOW_TRACKING_TOKEN, GEMINI_API_KEY (opcionales),
+  MLFLOW_EXPERIMENT_NAME (def. 'personal-shopper-moda'), RAG_USAR_HYDE (def. '0').
 """
 
+import atexit
 import os
 
 # --- PARCHE del bug de gradio_client: "TypeError: argument of type 'bool' is not iterable" ---
@@ -56,12 +58,12 @@ from vision import VisionCaptioner
 from observabilidad import Observador, construir_evento
 
 CORPUS_DIR = os.environ.get("RAG_CORPUS_DIR", ".")
-WANDB_PROJECT = os.environ.get("WANDB_PROJECT", "personal-shopper-moda")
 os.environ.setdefault("RAG_USAR_HYDE", "0")  # en el Space, HyDE desactivado por latencia
 
 # Carga perezosa: en ZeroGPU los modelos deben cargarse con la GPU asignada (dentro de @spaces.GPU).
 _sistema = {"shopper": None, "vision": None}
-obs = Observador(wandb_project=WANDB_PROJECT)
+obs = Observador()  # MLflow solo si MLFLOW_TRACKING_URI está definida
+atexit.register(obs.cerrar)
 
 
 def _asegurar_cargado():

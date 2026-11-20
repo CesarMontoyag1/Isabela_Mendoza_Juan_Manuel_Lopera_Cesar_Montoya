@@ -53,14 +53,16 @@ if not os.path.isdir('Isabela_Mendoza_Juan_Manuel_Lopera_Cesar_Montoya'):
 %cd Isabela_Mendoza_Juan_Manuel_Lopera_Cesar_Montoya
 print("Contenido de final/:", os.listdir('final'))''')
 
-md(r'''## Celda 3 — (Opcional) Observabilidad en W&B
+md(r'''## Celda 3 — (Opcional) Observabilidad en MLflow
 
-Si tienes cuenta de W&B, pega aquí tu API key (de https://wandb.ai/authorize). Si la dejas vacía,
-el sistema igual funciona y solo escribe el log JSON local. **No subas tu key al repositorio.**''')
+Si tienes un servidor de MLflow, define su URI aquí (y el token si el servidor lo pide). Si la dejas
+vacía, el sistema igual funciona y solo escribe el log JSON local. **No subas credenciales al
+repositorio.**''')
 
 code(r'''import os
-# os.environ['WANDB_API_KEY'] = 'pega-tu-key-aqui'   # opcional
-os.environ['WANDB_PROJECT'] = 'personal-shopper-moda'
+# os.environ['MLFLOW_TRACKING_URI'] = 'http://tu-servidor:5000'   # opcional
+# os.environ['MLFLOW_TRACKING_TOKEN'] = 'pega-tu-token-aqui'       # si aplica
+os.environ['MLFLOW_EXPERIMENT_NAME'] = 'personal-shopper-moda'
 # Backend del generador: 'gguf' (rápido en CPU) o 'fp16' (necesita GPU).
 os.environ['RAG_LOAD_IN'] = 'gguf'
 print('config lista. Juez/generador:', os.environ['RAG_LOAD_IN'])''')

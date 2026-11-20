@@ -7,7 +7,7 @@ Une las piezas de los módulos en un solo sistema usable desde una URL pública:
     cuantizado para caber en Hugging Face Spaces gratuito).
   - M4: componente visual (BLIP) — el usuario sube una foto de una prenda y el sistema busca algo
     parecido.
-  - M5: health check, logging estructurado en JSON y observabilidad en W&B.
+  - M5: health check, logging estructurado en JSON y observabilidad en MLflow.
 
 Cómo se ejecuta:
   - Local / Colab:   python final/app.py
@@ -15,11 +15,13 @@ Cómo se ejecuta:
 
 Variables de entorno (en Spaces se guardan como SECRETOS, nunca en el repo):
   - RAG_LOAD_IN   : 'fp16' (def.) | 'int8' | 'int4'  -> cuantización del generador.
-  - WANDB_API_KEY : (opcional) activa la observabilidad en W&B.
-  - WANDB_PROJECT : (opcional) nombre del proyecto W&B (def. 'personal-shopper-moda').
+  - MLFLOW_TRACKING_URI    : (opcional) URI del servidor MLflow; sin ella solo hay log JSON local.
+  - MLFLOW_EXPERIMENT_NAME : (opcional) experimento MLflow (def. 'personal-shopper-moda').
+  - MLFLOW_TRACKING_TOKEN  : (opcional) token del servidor MLflow (lo lee la librería).
   - RAG_CORPUS_DIR: carpeta que contiene corpus/ y eval/ (def. 'notebooks/M3').
 """
 
+import atexit
 import os
 import gradio as gr
 
@@ -34,7 +36,6 @@ CORPUS_DIR = os.environ.get("RAG_CORPUS_DIR", "notebooks/M3")
 LOAD_IN    = os.environ.get("RAG_LOAD_IN", "gguf")
 GGUF_REPO  = os.environ.get("RAG_GGUF_REPO", "Qwen/Qwen2.5-1.5B-Instruct-GGUF")
 GGUF_FILE  = os.environ.get("RAG_GGUF_FILE", "qwen2.5-1.5b-instruct-q4_k_m.gguf")
-WANDB_PROJECT = os.environ.get("WANDB_PROJECT", "personal-shopper-moda")
 
 # --- Carga única de los modelos (al arrancar el Space) ---
 print("Cargando sistema (puede tardar en el primer arranque)...")
@@ -44,7 +45,8 @@ if LOAD_IN == "gguf":
 else:
     shopper = PersonalShopper(corpus_dir=CORPUS_DIR, load_in=LOAD_IN)
 vision = VisionCaptioner()
-obs = Observador(wandb_project=WANDB_PROJECT)
+obs = Observador()
+atexit.register(obs.cerrar)
 
 
 def responder(pregunta, imagen, modo):
@@ -90,7 +92,7 @@ def responder(pregunta, imagen, modo):
                                 for p in exp["prendas"])
             detalle += ("**" + oid + "** — " + exp["look"][:90] + "\n" + prendas + "\n\n")
 
-        # Logging estructurado + W&B (sin datos personales). 'vision' solo si se usó de verdad.
+        # Logging estructurado + MLflow (sin datos personales). 'vision' solo si se usó de verdad.
         evento = construir_evento(pregunta, salida, modo, con_imagen=vision_usada)
         evento["latencia_total_s"] = round(lat_total, 3)
         evento["latencias_etapa"] = salida.get("latencias", {})

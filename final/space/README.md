@@ -42,8 +42,9 @@ print(Client("https://CesarMontoya00-personal-shopper-moda.hf.space").predict(ap
 |---|---|---|
 | `RAG_LOAD_IN` | backend del generador (`gguf` / `fp16`) | `gguf` |
 | `RAG_USAR_HYDE` | activar HyDE (`1`/`0`) | `0` en el Space |
-| `WANDB_API_KEY` | observabilidad en W&B (opcional) | — |
-| `WANDB_PROJECT` | nombre del proyecto W&B | `personal-shopper-moda` |
+| `MLFLOW_TRACKING_URI` | URI del servidor de MLflow; sin ella solo hay log JSON local | — |
+| `MLFLOW_EXPERIMENT_NAME` | nombre del experimento MLflow | `personal-shopper-moda` |
+| `MLFLOW_TRACKING_TOKEN` | token del servidor MLflow, si lo requiere | — |
 
 ## Fuente del corpus y licencia
 
