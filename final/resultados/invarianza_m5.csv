@@ -1,0 +1,5 @@
+variante,es_moda_detectado,valvula_activada,solapamiento_outfits_vs_orig,top_3_outfits
+original,True,False,1.0,"B_b32, B_b425, B_b118"
+flip_horizontal,True,False,0.0,"C_b122, C_b195, C_b185"
+brillo_mas_20,True,False,0.0,"C_b122, C_b157, C_b155"
+recorte_85pct,True,False,0.0,"C_b195, C_b266, C_b196"

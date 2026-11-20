@@ -99,42 +99,42 @@
     "id": "m4_img_01",
     "tipo": "con_imagen",
     "input": "Quiero un outfit que combine con esta prenda para salir el fin de semana.",
-    "image_path": "notebooks/M4/imagenes_test/ropa_01.png",
+    "image_path": "final/imagenes_test/ropa_01.png",
     "expected_response": "Recomendación de outfits reales del catálogo coherentes con la prenda mostrada en la imagen, citando sus IDs."
   },
   {
     "id": "m4_img_02",
     "tipo": "con_imagen",
     "input": "Busco algo similar a esto para el trabajo o una reunión formal.",
-    "image_path": "notebooks/M4/imagenes_test/ropa_02.png",
+    "image_path": "final/imagenes_test/ropa_02.png",
     "expected_response": "Recomendación de outfits del catálogo acordes a la prenda de la foto y ocasión formal/trabajo, citando IDs."
   },
   {
     "id": "m4_img_03",
     "tipo": "con_imagen",
     "input": "Recomiéndame un conjunto parecido a esta imagen.",
-    "image_path": "notebooks/M4/imagenes_test/ropa_03.png",
+    "image_path": "final/imagenes_test/ropa_03.png",
     "expected_response": "Recomendación de outfits del catálogo coherentes con la imagen adjunta, citando sus identificadores."
   },
   {
     "id": "m4_img_04",
     "tipo": "con_imagen",
     "input": "¿Qué opciones del catálogo encajan con este estilo?",
-    "image_path": "notebooks/M4/imagenes_test/ropa_04.png",
+    "image_path": "final/imagenes_test/ropa_04.png",
     "expected_response": "Recomendación fundamentada en outfits del catálogo alineados al estilo visual de la foto, citando IDs."
   },
   {
     "id": "m4_adv_01",
     "tipo": "fuera_de_corpus",
     "input": "¿Qué outfit me recomiendas basado en esta imagen?",
-    "image_path": "notebooks/M4/imagenes_test/adv_grafico.png",
+    "image_path": "final/imagenes_test/adv_grafico.png",
     "expected_response": "No encuentro esa información en el catálogo porque la imagen no corresponde a prendas de vestir o moda."
   },
   {
     "id": "m4_adv_02",
     "tipo": "fuera_de_corpus",
     "input": "Combina esta prenda por favor.",
-    "image_path": "notebooks/M4/imagenes_test/adv_ruido.png",
+    "image_path": "final/imagenes_test/adv_ruido.png",
     "expected_response": "No encuentro esa información en el catálogo porque la imagen no muestra ropa ni moda."
   }
 ]
