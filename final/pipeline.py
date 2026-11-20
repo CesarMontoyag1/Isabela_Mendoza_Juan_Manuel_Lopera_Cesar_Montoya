@@ -1,5 +1,6 @@
 import collections
 import csv
+import gc
 import hashlib
 import json
 import os
@@ -18,7 +19,6 @@ from transformers import (
     AutoModelForCausalLM,
     AutoProcessor,
     AutoTokenizer,
-    BitsAndBytesConfig,
     Qwen2VLForConditionalGeneration,
 )
 
@@ -81,12 +81,6 @@ SYSTEM_PROMPT_M3 = (
     "que no estén en el contexto."
 )
 
-HYDE_SYS = (
-    "Eres un redactor de catálogo de moda. Dada una petición de un cliente, redacta en "
-    "2-3 frases un outfit hipotético que la satisfaría (estilo, prendas, colores, estación, "
-    "ocasión). Solo la descripción, en español."
-)
-
 SINONIMOS_GENERO = {
     "De hombre": ["hombre", "masculino", "caballero", "hombres", "para él", "para el"],
     "De mujer": ["mujer", "femenino", "dama", "mujeres", "para ella", "chica", "vestido", "falda"],
@@ -115,11 +109,11 @@ def parse_json_seguro(texto: str) -> Dict[str, Any]:
 
 
 class PersonalShopperOptimizado:
-    """Pipeline integrado M1 + M3 + M4 con cuantización 4-bit en GPU y fallback CPU."""
+    """Pipeline integrado M1 + M3 + M4 compatible con ZeroGPU (CPU init -> CUDA inference)."""
 
-    def __init__(self, usar_4bit: bool = True, usar_cache: bool = True):
+    def __init__(self, usar_4bit: bool = False, usar_cache: bool = True):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.usar_4bit = bool(usar_4bit and self.device == "cuda")
+        self.usar_4bit = False
         self.usar_cache = usar_cache
         self._cache: collections.OrderedDict[str, Dict[str, Any]] = collections.OrderedDict()
         self._max_cache = 64
@@ -174,92 +168,53 @@ class PersonalShopperOptimizado:
                 "gender": genero_outfit(items),
             })
 
-        self.embedder = SentenceTransformer(EMBED_MODEL, device=self.device)
-        client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-        try:
-            self.col = client.get_collection("outfits_m5")
-            if self.col.count() != len(self.documentos):
-                raise ValueError("Reindexar")
-        except Exception:
-            try:
-                client.delete_collection("outfits_m5")
-            except Exception:
-                pass
-            self.col = client.create_collection("outfits_m5", metadata={"hnsw:space": "cosine"})
-            for i in range(0, len(self.documentos), 128):
-                sl = slice(i, i + 128)
-                embs = self.embedder.encode(
-                    ["passage: " + t for t in self.documentos[sl]],
-                    normalize_embeddings=True,
-                    show_progress_bar=False,
-                ).tolist()
-                self.col.add(
-                    ids=self.doc_ids[sl],
-                    documents=self.documentos[sl],
-                    embeddings=embs,
-                    metadatas=self.metadatos[sl],
-                )
+        self.embedder = SentenceTransformer(EMBED_MODEL, device="cuda" if torch.cuda.is_available() else "cpu")
+        client = chromadb.EphemeralClient()
+        self.embedder = SentenceTransformer(EMBED_MODEL, device="cuda" if torch.cuda.is_available() else "cpu")
+        client = chromadb.EphemeralClient()
+        self.col = client.create_collection("outfits_m5", metadata={"hnsw:space": "cosine"})
+        for i in range(0, len(self.documentos), 128):
+            sl = slice(i, i + 128)
+            embs = self.embedder.encode(
+                ["passage: " + t for t in self.documentos[sl]],
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            ).tolist()
+            self.col.add(
+                ids=self.doc_ids[sl],
+                documents=self.documentos[sl],
+                embeddings=embs,
+                metadatas=self.metadatos[sl],
+            )
 
         self.bm25 = BM25Okapi([re.findall(r"\w+", d.lower()) for d in self.documentos])
 
     def _cargar_modelos(self):
+        # En ZeroGPU al iniciar no hay GPU: cargamos en CPU en bfloat16 y movemos a CUDA dentro de @spaces.GPU
         self.gen_tok = AutoTokenizer.from_pretrained(GEN_MODEL_ID)
         if self.gen_tok.pad_token is None:
             self.gen_tok.pad_token = self.gen_tok.eos_token
 
-        if self.usar_4bit:
-            # Técnica exigida por rúbrica: Cuantización int4 (NF4) con bitsandbytes + atención SDPA
-            bnb_cfg = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_compute_dtype=torch.float16,
-            )
-            base_gen = AutoModelForCausalLM.from_pretrained(
-                GEN_MODEL_ID,
-                quantization_config=bnb_cfg,
-                attn_implementation="sdpa",
-                device_map="auto",
-            )
-            vis_model = Qwen2VLForConditionalGeneration.from_pretrained(
-                VIS_MODEL_ID,
-                quantization_config=bnb_cfg,
-                attn_implementation="sdpa",
-                device_map="auto",
-            )
-        elif self.device == "cuda":
-            base_gen = AutoModelForCausalLM.from_pretrained(
-                GEN_MODEL_ID, torch_dtype=torch.float16, attn_implementation="sdpa"
-            ).to(self.device)
-            vis_model = Qwen2VLForConditionalGeneration.from_pretrained(
-                VIS_MODEL_ID, torch_dtype=torch.float16, attn_implementation="sdpa"
-            ).to(self.device)
-        else:
-            # Modo CPU para Hugging Face Spaces gratuito
-            torch.set_num_threads(max(1, os.cpu_count() or 2))
-            base_gen = AutoModelForCausalLM.from_pretrained(
-                GEN_MODEL_ID, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True
-            )
-            vis_model = Qwen2VLForConditionalGeneration.from_pretrained(
-                VIS_MODEL_ID, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True
-            )
+        torch.set_num_threads(max(1, os.cpu_count() or 2))
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        base_gen = AutoModelForCausalLM.from_pretrained(
+            GEN_MODEL_ID,
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
+        ).to(self.device)
 
         if ADAPTER_PATH.exists():
-            self.gen_model = PeftModel.from_pretrained(base_gen, str(ADAPTER_PATH))
+            self.gen_model = PeftModel.from_pretrained(base_gen, str(ADAPTER_PATH)).to(self.device)
             self.tiene_lora = True
         else:
             self.gen_model = base_gen
             self.tiene_lora = False
 
         self.gen_model.eval()
-        # Presupuesto visual equilibrado (448*28*28): conserva bordes en recortes y ahorra tokens vs M4 (512)
-        self.vis_processor = AutoProcessor.from_pretrained(
-            VIS_MODEL_ID,
-            min_pixels=224 * 28 * 28,
-            max_pixels=448 * 28 * 28,
-        )
-        self.vis_model = vis_model
-        self.vis_model.eval()
+        gc.collect()
+
+        self.vis_processor = None
+        self.vis_model = None
 
     @torch.inference_mode()
     def _analizar_imagen(self, imagen: Image.Image) -> Dict[str, Any]:
@@ -350,17 +305,41 @@ class PersonalShopperOptimizado:
 
     def health_check(self) -> Dict[str, Any]:
         """Endpoint lógico de verificación de salud para monitoreo y HF Spaces."""
-        vram_gb = round(torch.cuda.max_memory_allocated() / (1024**3), 2) if self.device == "cuda" else 0.0
+        vram_gb = round(torch.cuda.max_memory_allocated() / (1024**3), 2) if torch.cuda.is_available() else 0.0
         return {
             "status": "healthy" if self.col.count() > 0 else "degraded",
-            "device": self.device,
-            "quantization_4bit": self.usar_4bit,
+            "device": "zerogpu (cuda on demand)",
+            "precision": "bfloat16",
             "lora_loaded": self.tiene_lora,
             "catalog_outfits": self.col.count(),
             "vram_max_gb": vram_gb,
         }
 
     def consultar(self, pregunta: str, imagen: Optional[Image.Image] = None, registrar_log: bool = True) -> Dict[str, Any]:
+        # Dentro de @spaces.GPU ya tenemos GPU asignada: actualizamos self.device y movemos los modelos a CUDA si aún no lo están
+        target_device = "cuda" if torch.cuda.is_available() else "cpu"
+        if self.device != target_device or next(self.gen_model.parameters()).device.type != target_device:
+            self.device = target_device
+            self.gen_model.to(self.device)
+            self.embedder.to(self.device)
+
+        if imagen is not None:
+            if self.vis_model is None:
+                self.vis_processor = AutoProcessor.from_pretrained(
+                    VIS_MODEL_ID,
+                    min_pixels=224 * 28 * 28,
+                    max_pixels=448 * 28 * 28,
+                )
+                self.vis_model = Qwen2VLForConditionalGeneration.from_pretrained(
+                    VIS_MODEL_ID,
+                    torch_dtype=torch.bfloat16,
+                    low_cpu_mem_usage=True,
+                )
+                self.vis_model.eval()
+                gc.collect()
+            if next(self.vis_model.parameters()).device.type != self.device:
+                self.vis_model.to(self.device)
+
         t0 = time.time()
         if not pregunta or not pregunta.strip():
             pregunta = "Recomiéndame un outfit del catálogo que combine con esta imagen."
@@ -420,6 +399,61 @@ class PersonalShopperOptimizado:
                     return salida
                 consulta_enr = f"{pregunta}. Prenda o referencia visual adjunta: {info_visual['descripcion']}"
 
+            # 1.5 Guardrail determinista pre-RAG para consultas administrativas / fuera de catálogo
+            q_check = consulta_enr.lower()
+            patrones_ood = [
+                r"\benv[ií]os?\b",
+                r"\bdomicilios?\b",
+                r"\bcu[aá]nto (cuesta|vale|salen?)\b",
+                r"\bprecios?\b",
+                r"\bdevoluci[oó]n(es)?\b",
+                r"\bcambios?\b",
+                r"\bgarant[ií]a\b",
+                r"\bmedios? de pago\b",
+                r"\bcontraentrega\b",
+                r"\btallas?\b",
+                r"\bmedidas?\b",
+            ]
+            palabras_prenda = [
+                "outfit", "look", "ropa", "chaqueta", "camisa", "pantal",
+                "vestido", "falda", "abrigo", "zapatos", "tenis", "botines",
+                "combinar", "recomienda", "recomiéndame", "busco un", "busco una",
+            ]
+            es_consulta_admin = any(re.search(p, q_check) for p in patrones_ood)
+            pide_outfit = any(w in q_check for w in palabras_prenda)
+
+            if es_consulta_admin and not pide_outfit and imagen is None:
+                lat = time.time() - t0
+                respuesta_ood = (
+                    f"{VALVULA}: este asistente únicamente recomienda combinaciones de prendas "
+                    "del catálogo y no gestiona precios, disponibilidad de tallas, envíos ni devoluciones."
+                )
+                salida = {
+                    "respuesta": respuesta_ood,
+                    "contextos": [],
+                    "outfits": [],
+                    "latencia_s": lat,
+                    "uso_vision": False,
+                    "uso_herramienta": False,
+                    "valvula_activada": True,
+                    "perfil_m1": {},
+                    "info_visual": None,
+                    "filtro": {},
+                    "cache_hit": False,
+                }
+                if registrar_log:
+                    registrar_evento(
+                        consulta=pregunta,
+                        tiene_imagen=False,
+                        es_moda=False,
+                        uso_herramienta=False,
+                        valvula_activada=True,
+                        outfits_recuperados=[],
+                        latencia_s=lat,
+                        estado="valvula_pre_rag",
+                    )
+                return salida
+
             # 2. Extractor LoRA M1
             perfil_m1 = self._extraer_perfil_m1(consulta_enr)
 
@@ -454,7 +488,6 @@ class PersonalShopperOptimizado:
             densos = [(i, d) for i, d in self._buscar_denso(consulta_enr, k=pool * 3) if i in sub_ids][:pool]
             lexicos = self._buscar_bm25(consulta_enr, k=pool, candidatos_idx=idx_validos)
 
-            # HyDE determinista con atributos M1: evita 1 llamada autoregresiva extra del LLM cuantizado
             if perfil_m1:
                 hip = (
                     f"Outfit {perfil_m1.get('estilo', 'casual')} para {perfil_m1.get('ocasion', 'uso diario')}, "

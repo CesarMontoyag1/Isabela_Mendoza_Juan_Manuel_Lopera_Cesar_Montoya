@@ -1,14 +1,34 @@
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+import spaces
 import json
 import gradio as gr
+import gradio_client.utils as _gc_utils
 from PIL import Image
+
+_orig_schema_to_py = _gc_utils._json_schema_to_python_type
+def _safe_schema_to_py(schema, defs=None):
+    if isinstance(schema, bool):
+        return "Any" if schema else "None"
+    return _orig_schema_to_py(schema, defs)
+
+_gc_utils._json_schema_to_python_type = _safe_schema_to_py
 
 from observability import obtener_resumen_metricas
 from pipeline import PersonalShopperOptimizado
 
-shopper = PersonalShopperOptimizado(usar_4bit=True, usar_cache=True)
+_shopper = None
 
+def get_shopper():
+    global _shopper
+    if _shopper is None:
+        _shopper = PersonalShopperOptimizado()
+    return _shopper
 
-def procesar_consulta(texto: str, imagen: Image.Image | None):
+@spaces.GPU(duration=120)
+def procesar_consulta(texto, imagen=None):
+    shopper = get_shopper()
     res = shopper.consultar(texto, imagen=imagen, registrar_log=True)
 
     traza = {
@@ -24,7 +44,14 @@ def procesar_consulta(texto: str, imagen: Image.Image | None):
 
 
 def ver_salud_y_observabilidad():
-    salud = shopper.health_check()
+    if _shopper is None:
+        salud = {
+            "status": "ready (lazy-init on first GPU request)",
+            "device": "zerogpu (cuda on demand)",
+            "catalog_outfits": 800,
+        }
+    else:
+        salud = _shopper.health_check()
     metricas = obtener_resumen_metricas(ultimos_n=100)
     return json.dumps(salud, ensure_ascii=False, indent=2), json.dumps(metricas, ensure_ascii=False, indent=2)
 
@@ -73,4 +100,4 @@ with gr.Blocks(title="Personal Shopper Multimodal IA", theme=gr.themes.Soft()) a
         demo.load(fn=ver_salud_y_observabilidad, inputs=[], outputs=[out_health, out_obs])
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(ssr_mode=False)
