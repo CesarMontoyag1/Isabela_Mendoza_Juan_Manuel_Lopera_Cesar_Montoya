@@ -323,14 +323,44 @@ class PersonalShopper:
         if self.gguf_repo:
             from huggingface_hub import hf_hub_download
             ruta = hf_hub_download(repo_id=self.gguf_repo, filename=self.gguf_file)
-        # n_ctx=2048 basta (el prompt trae top-5 outfits); seed fijo para reproducibilidad.
-        self.llm = Llama(model_path=ruta, n_ctx=2048, n_threads=os.cpu_count() or 4,
+        # n_ctx=4096: cada outfit del contexto trae su descripción + ~8 prendas (~500 tokens), así
+        # que el prompt con top-5 outfits llega a ~2600 tokens y con 2048 desbordaba la ventana
+        # (ValueError: Requested tokens exceed context window). Qwen2.5 soporta 32k; 4096 deja
+        # margen y casi no cuesta memoria. Seed fijo para reproducibilidad.
+        self.n_ctx = 4096
+        self.llm = Llama(model_path=ruta, n_ctx=self.n_ctx, n_threads=os.cpu_count() or 4,
                          n_batch=512, seed=SEED, verbose=False, chat_format="qwen")
         self.gen_tok = None
         self._log("Generador GGUF cargado: " + str(ruta))
 
+    def _ajustar_prompt_gguf(self, system_prompt, user_prompt, max_new_tokens):
+        """Red de seguridad: si el prompt no cabe en la ventana de llama.cpp, quita outfits del
+        final del CONTEXTO (los menos relevantes, porque vienen ordenados) hasta que quepa.
+        Conserva siempre la pregunta y las instrucciones. Si no hace falta, no toca nada."""
+        def n_tok(txt):
+            return len(self.llm.tokenize(txt.encode("utf-8"), add_bos=False))
+        presupuesto = self.n_ctx - max_new_tokens - 64          # 64 = tokens del formato de chat
+        if n_tok(system_prompt) + n_tok(user_prompt) <= presupuesto:
+            return user_prompt
+        marca = "\n\nPREGUNTA DEL CLIENTE: "
+        if marca not in user_prompt:                            # prompt sin contexto (p. ej. juez)
+            ids = self.llm.tokenize(user_prompt.encode("utf-8"), add_bos=False)
+            ids = ids[: max(256, presupuesto - n_tok(system_prompt))]
+            return self.llm.detokenize(ids).decode("utf-8", errors="ignore")
+        cabeza, cola = user_prompt.split(marca, 1)
+        encabezado, _, cuerpo = cabeza.partition("\n")
+        bloques = cuerpo.split("\n\n")
+        while len(bloques) > 1 and (n_tok(system_prompt) +
+                                    n_tok(encabezado + "\n" + "\n\n".join(bloques) + marca + cola)
+                                    > presupuesto):
+            bloques.pop()
+        self._log("Aviso: contexto recortado a %d outfit(s) para caber en n_ctx=%d."
+                  % (len(bloques), self.n_ctx))
+        return encabezado + "\n" + "\n\n".join(bloques) + marca + cola
+
     def generar(self, system_prompt, user_prompt, max_new_tokens=200):
         if self._backend == "gguf":
+            user_prompt = self._ajustar_prompt_gguf(system_prompt, user_prompt, max_new_tokens)
             out = self.llm.create_chat_completion(
                 messages=[{"role": "system", "content": system_prompt},
                           {"role": "user", "content": user_prompt}],
