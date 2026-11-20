@@ -99,17 +99,19 @@ def d3_cumplimiento(eval_set, respuestas, d2, umbral=4):
     return out
 
 
-def harness(eval_set, sistema_fn, juez_fn, ids_validos, nombre="sistema"):
+def harness(eval_set, sistema_fn, juez_fn, ids_validos, nombre="sistema", verbose=True):
     """Corre las 3 dimensiones + latencias p50/p95 sobre el eval set.
     sistema_fn(pregunta) -> dict con respuesta/outfits/latencia_s.
     juez_fn(system, user) -> texto (idealmente un modelo DISTINTO al generador).
     """
     respuestas, outfits, lat = [], [], []
-    for e in eval_set:
+    for n, e in enumerate(eval_set, 1):
         s = sistema_fn(e["input"])
         respuestas.append(s.get("respuesta", ""))
         outfits.append(s.get("outfits", []))
         lat.append(s.get("latencia_s", 0.0))
+        if verbose:  # progreso visible: así se nota que NO está colgado
+            print("[%s] caso %d/%d  (%.1fs)" % (nombre[:40], n, len(eval_set), lat[-1]), flush=True)
 
     d1 = d1_citacion(eval_set, respuestas, outfits, ids_validos)
     d2 = d2_juez(eval_set, respuestas, juez_fn)

@@ -129,7 +129,8 @@ class PersonalShopper:
 
     def __init__(self, corpus_dir, device=None, load_in="fp16", gen_model=GEN_MODEL,
                  gguf_repo=None, gguf_file=None, verbose=True):
-        """load_in: 'fp16' | 'int8' | 'int4' (bitsandbytes, requiere GPU) | 'gguf' (llama.cpp, CPU).
+        """load_in: 'fp16' | 'fp32' | 'int8' | 'int4' (bitsandbytes, requiere GPU) | 'gguf' (llama.cpp, CPU).
+        En CPU, 'fp16' y 'fp32' cargan fp32 (fp16 en CPU es inviable).
         Para GGUF: pasar gguf_repo (repo HF con el .gguf) y gguf_file (nombre del archivo), o una
         ruta local en gguf_file. GGUF es la técnica de eficiencia del Módulo 5 para correr rápido
         en CPU (Hugging Face Spaces gratuito)."""
@@ -308,9 +309,20 @@ class PersonalShopper:
                 self._log(f"No se pudo cuantizar ({e}); usando fp16/fp32.")
                 kwargs = {}
         if "quantization_config" not in kwargs:
-            kwargs["torch_dtype"] = "auto"
             if self._device == "cuda":
+                # GPU: fp16 (o el dtype nativo del modelo) es lo rápido.
+                kwargs["torch_dtype"] = torch.float16 if self.load_in == "fp16" else "auto"
                 kwargs["device_map"] = "cuda"
+            else:
+                # CPU: fp16/bf16 NO tienen kernels rápidos y la generación puede tardar una
+                # eternidad (el notebook de eficiencia parecía "colgado"). En CPU siempre fp32.
+                if self.load_in == "fp16":
+                    self._log("Aviso: fp16 en CPU es muy lento; se carga en fp32.")
+                kwargs["torch_dtype"] = torch.float32
+                try:
+                    torch.set_num_threads(os.cpu_count() or 4)
+                except Exception:
+                    pass
         self.gen_model = AutoModelForCausalLM.from_pretrained(self.gen_model_name, **kwargs)
         self.gen_model.eval()
         self._log(f"Generador {self.gen_model_name} cargado (load_in={self.load_in}).")

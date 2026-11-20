@@ -108,7 +108,7 @@ md(r'''## 3. Medir ANTES (fp32 en CPU) — misma máquina que el despliegue
 
 Forzamos el generador en **CPU** para aislar el efecto de la cuantización (no GPU vs CPU).
 
-**Nota de diseño:** fp32 en CPU es MUY lento (cada generación ~1-2 min; con HyDE son 2 por consulta).
+**Nota de diseño:** fp32 en CPU es MUY lento (cada generación ~30-90 s; con HyDE son 2 por consulta).
 Medir los 18 casos tardaría ~1 h. La **latencia por consulta no depende del número de casos**, así
 que medimos el "antes" sobre un **subconjunto de N_ANTES casos** (suficiente para una mediana
 estable) y lo decimos. La versión eficiente (GGUF, rápida) sí se mide sobre todo el eval set.''')
@@ -120,11 +120,11 @@ def rss_mb(): return proc.memory_info().rss / 1e6
 from rag_core import PersonalShopper
 
 # ANTES: fp32 en CPU. Subconjunto pequeño para latencia (fp32-CPU es muy lento).
-N_ANTES = 6  # casos para medir el "antes"; la latencia por consulta no depende de N.
+N_ANTES = 3  # casos para medir el "antes"; la latencia por consulta no depende de N.
 EVAL_ANTES = EVAL_SET[:N_ANTES]
 print('Midiendo "antes" (fp32 CPU) sobre', len(EVAL_ANTES), 'casos. SIN HyDE para que sea viable.')
 
-shopper_antes = PersonalShopper(corpus_dir=CORPUS_DIR, load_in='fp16', device='cpu')
+shopper_antes = PersonalShopper(corpus_dir=CORPUS_DIR, load_in='fp32', device='cpu')
 ids_validos = set(shopper_antes.doc_ids)
 if not USAR_GEMINI:
     JUEZ = hacer_juez_mismo_generador(shopper_antes)
@@ -159,7 +159,7 @@ else:
 
 # GGUF con HyDE: sobre el mismo subconjunto que el "antes" (comparable, y HyDE es costoso).
 sc_hyde, det_hyde = harness(EVAL_ANTES, lambda q: shopper_gguf.sistema(q, modo='avanzado', usar_hyde=True),
-                            JUEZ_D, ids_validos, nombre='Después (GGUF int4 CPU, con HyDE) [n=6]')
+                            JUEZ_D, ids_validos, nombre='Después (GGUF int4 CPU, con HyDE) [n=3]')
 sc_hyde['tam_disco_gb'] = round(tam_gguf_gb, 3); sc_hyde['n_casos'] = len(EVAL_ANTES)
 
 # GGUF SIN HyDE: la versión DESPLEGABLE. Se mide sobre TODO el eval set (es rápida).
@@ -189,7 +189,7 @@ generación del LLM es el cuello de botella y cuánto pesa HyDE (segunda generac
 
 code(r'''def latencias_etapa(shopper, hyde):
     acc = {}
-    for e in EVAL_SET[:6]:
+    for e in EVAL_SET[:3]:
         s = shopper.sistema(e['input'], modo='avanzado', usar_hyde=hyde)
         for k, v in (s.get('latencias') or {}).items():
             acc.setdefault(k, []).append(v)
