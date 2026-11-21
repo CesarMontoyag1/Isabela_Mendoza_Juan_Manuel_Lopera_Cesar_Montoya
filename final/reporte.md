@@ -4,7 +4,7 @@
 * **Curso:** SI4006 · Proyecto Integrador (Módulos 1 a 5)
 * **Demo en línea (Hugging Face Spaces):** https://huggingface.co/spaces/CesarMontoya/personal-shopper-moda
 * **Observabilidad (Weights & Biases):** proyecto `personal-shopper-moda` (configuración **privada**, no compartible por enlace público); la evidencia del dashboard se incluye como captura en este reporte (sección 8).
-* **Diapositivas de sustentación:** `<PEGAR_ENLACE_DIAPOSITIVAS>` ⚠️ *PENDIENTE: crear las diapositivas y enlazarlas (en `final/` o un enlace)*
+* **Diapositivas de sustentación:** [`final/slides/Personal_Shopper_de_Moda_Sustentacion_final_diseno_app.pptx`](slides/Personal_Shopper_de_Moda_Sustentacion_final_diseno_app.pptx) (también en [PDF](slides/Personal_Shopper_de_Moda_Sustentacion_final_diseno_app.pdf))
 * **Repositorio:** [GitHub — Isabela_Mendoza_Juan_Manuel_Lopera_Cesar_Montoya](https://github.com/CesarMontoyag1/Isabela_Mendoza_Juan_Manuel_Lopera_Cesar_Montoya)
 
 ---
