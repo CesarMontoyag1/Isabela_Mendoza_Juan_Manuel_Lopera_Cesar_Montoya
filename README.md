@@ -12,6 +12,12 @@ El proyecto se construye en capas que no se descartan: cada módulo se apoya en 
 | **M1** | Modelo afinado que **extrae el perfil de estilo** del mensaje del usuario | `notebooks/M1/` |
 | **M2** | **Harness de evaluación** (la vara con la que medimos todo lo demás) | `notebooks/M2/` |
 | **M3** | **Sistema RAG agéntico** que recomienda outfits reales del catálogo | `notebooks/M3/` |
+| **M4** | **Componente visual** (foto → consulta) con casos de imagen y tabla de delta | `notebooks/M4/` |
+| **M5** | **Sistema integrado, eficiente y desplegado** (eficiencia medida + observabilidad) | `final/` |
+
+- **Demo pública (Hugging Face Spaces):** https://huggingface.co/spaces/CesarMontoya/personal-shopper-moda
+- **Observabilidad (Weights & Biases):** proyecto `personal-shopper-moda` (privado; evidencia por captura en el reporte, sección 8)
+- **Reporte final:** [`final/reporte.md`](final/reporte.md)
 
 ---
 
@@ -100,6 +106,47 @@ no sustentados). Resultados en `notebooks/M3/resultados/`.
 
 ---
 
+## M4 — Componente visual: de una foto a una consulta
+
+**Qué hace:** si el usuario sube la **foto de una prenda**, un modelo visión-lenguaje
+(`Qwen/Qwen2-VL-2B-Instruct`) la interpreta y la convierte en atributos de moda (género aparente,
+clima sugerido, descripción breve) que enriquecen la consulta antes del RAG. Incluye un **guardrail
+de dominio**: si la imagen no es ropa (un gráfico, ruido, un objeto cualquiera), el sistema activa
+la **válvula de escape** en vez de inventar. Eval set de 18 casos (12 texto + 4 imagen + 2
+adversariales con imagen) en `notebooks/M4/`.
+
+---
+
+## M5 — Sistema integrado, eficiente y desplegado
+
+**Qué hace:** une las cinco capas en un único pipeline (`final/pipeline.py`), aplica una **técnica
+de eficiencia** medida antes/después, lo despliega en una URL pública y deja trazabilidad de lo que
+pasa en producción.
+
+- **Técnica de eficiencia — cuantización 4-bit NF4 (bitsandbytes):** sobre el generador, el
+  componente que más memoria ocupa. Medida en la misma máquina (NVIDIA T4) sobre el mismo eval set:
+  la VRAM máxima baja de **12.45 GB a 3.22 GB (−74 %)** con una pérdida de calidad dentro del
+  presupuesto fijado de antemano. Detalle y tabla antes/después en `final/05_evaluacion_m5.ipynb` y
+  en el reporte. *(Nota de despliegue: el Space corre en Hugging Face **ZeroGPU**, donde bitsandbytes
+  no está soportado, así que el generador se sirve en **bfloat16**; la cuantización 4-bit se midió y
+  documentó en el notebook de evaluación. Ver reporte, sección 5.)*
+- **Despliegue:** app **Gradio** en Hugging Face Spaces (ZeroGPU) con el componente visual incluido y
+  un **health check** (`health_check()`) que verifica, sin hacer inferencia, que el índice Chroma
+  cargó los 800 outfits, el dispositivo activo y el adaptador LoRA.
+- **Logging estructurado sin PII:** cada petición escribe una línea JSON en
+  `final/resultados/logs_observabilidad.jsonl` con hora, latencia, componentes usados (RAG,
+  herramienta, visión), válvula y métricas de uso. **Nunca se guarda el texto ni la imagen:** la
+  consulta se reduce a su longitud y a un hash `SHA-256` truncado.
+- **Observabilidad en Weights & Biases (W&B):** si `WANDB_API_KEY` está configurada como secreto del
+  Space, cada petición registra latencia y métricas de uso (`inferencia/latencia_s`,
+  `inferencia/uso_herramienta`, `inferencia/valvula_activada`, `inferencia/cache_hit`,
+  `inferencia/peticiones_totales`, ...) en el proyecto `WANDB_PROJECT` (def. `personal-shopper-moda`).
+  Las credenciales van como secretos del entorno, nunca en el repositorio.
+- **Evaluación y eficiencia:** el mismo harness del M2 (D1/D2/D3) mide calidad y latencias p50/p95
+  antes (M4 FP16) y después (M5 4-bit) en `final/05_evaluacion_m5.ipynb`.
+
+---
+
 ## Estructura del repositorio
 
 ```
@@ -109,12 +156,21 @@ no sustentados). Resultados en `notebooks/M3/resultados/`.
 ├── notebooks/
 │   ├── M1/                     # tokenización + fine-tuning LoRA
 │   ├── M2/                     # harness de evaluación + README
-│   └── M3/                     # sistema RAG agéntico + README (reporte) + resultados
-└── README.md                   # este archivo
+│   ├── M3/                     # sistema RAG agéntico + README (reporte) + resultados
+│   └── M4/                     # componente visual + eval con imágenes + resultados
+├── final/                      # M5: pipeline integrado, app Gradio, eficiencia, observabilidad W&B
+│   ├── pipeline.py             # pipeline único M1+M3+M4 (PersonalShopperOptimizado)
+│   ├── app.py                  # interfaz Gradio del Space (ZeroGPU)
+│   ├── observability.py        # logging JSONL sin PII + métricas a W&B
+│   ├── 05_evaluacion_m5.ipynb  # tabla antes/después de eficiencia + invarianza
+│   ├── reporte.md              # reporte final del proyecto
+│   └── resultados/             # CSV de comparación, invarianza y log de observabilidad
+└── README.md                   # este archivo (portada del proyecto)
 ```
 
 ## Reproducibilidad y uso de IA
 
 Todo corre en **Colab gratuito sin claves de pago obligatorias**; semillas y versiones de modelos
-fijadas. Los modelos del sistema (generador, juez y embeddings) son locales. Cada módulo documenta
-en su propio README el detalle y la sección "Uso de IA".
+fijadas. Los modelos del sistema (generador y embeddings) son locales; el juez de evaluación es un
+modelo externo de familia distinta (`gemma-2-2b-it`) para que la métrica D2 discrimine entre
+versiones. Cada módulo documenta en su propio README el detalle y la sección "Uso de IA".

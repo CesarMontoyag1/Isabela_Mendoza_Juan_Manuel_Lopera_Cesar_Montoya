@@ -1,0 +1,4 @@
+sistema,n_casos,D1_citacion,D2_juez,D3_cumplimiento,latencia_p50_s,latencia_p95_s,vram_max_gb
+M4 Integrado (12 casos texto),12,0.833,3.917,0.75,9.875,13.317,12.45
+M4 Multimodal (6 casos imagen),6,0.833,3.833,0.667,15.932,17.776,12.45
+M4 Completo (18 casos: texto+imagen),18,0.833,3.889,0.722,10.476,16.837,12.45
