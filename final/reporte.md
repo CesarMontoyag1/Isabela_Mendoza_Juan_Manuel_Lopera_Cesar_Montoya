@@ -2,9 +2,9 @@
 
 * **Equipo:** Isabela Mendoza, Juan Manuel Lopera Soto, César Montoya
 * **Curso:** SI4006 · Proyecto Integrador (Módulos 1 a 5)
-* **Demo en línea (Hugging Face Spaces):** `<PEGAR_URL_DEL_SPACE_AQUI>`
-* **Observabilidad (Weights & Biases):** `<PEGAR_URL_DEL_PROYECTO_WANDB_AQUI>`
-* **Diapositivas de sustentación:** `final/presentacion_sustentacion.pdf` *(o `<PEGAR_ENLACE_DIAPOSITIVAS>`)*
+* **Demo en línea (Hugging Face Spaces):** https://huggingface.co/spaces/CesarMontoya/personal-shopper-moda
+* **Observabilidad (Weights & Biases):** proyecto `personal-shopper-moda` (configuración **privada**, no compartible por enlace público); la evidencia del dashboard se incluye como captura en este reporte (sección 8).
+* **Diapositivas de sustentación:** `<PEGAR_ENLACE_DIAPOSITIVAS>` ⚠️ *PENDIENTE: crear las diapositivas y enlazarlas (en `final/` o un enlace)*
 * **Repositorio:** [GitHub — Isabela_Mendoza_Juan_Manuel_Lopera_Cesar_Montoya](https://github.com/CesarMontoyag1/Isabela_Mendoza_Juan_Manuel_Lopera_Cesar_Montoya)
 
 ---
@@ -28,7 +28,7 @@ Los cinco módulos operan como un único pipeline secuencial (`final/pipeline.py
                     │
                     ▼
 ┌───────────────────────────────────────────────────────────────────┐
-│ M4 · PERCEPCIÓN VISUAL (Qwen/Qwen2-VL-2B-Instruct, 4-bit NF4)     │
+│ M4 · PERCEPCIÓN VISUAL (Qwen/Qwen2-VL-2B-Instruct)               │
 │  • Si adjunta imagen:                                             │
 │    1. Guardrail visual: verifica si es prenda/moda (`es_moda`)    │
 │       └─ NO (gráfico, ruido, fuera de dominio) ──► Válvula escape │
@@ -71,7 +71,7 @@ Los cinco módulos operan como un único pipeline secuencial (`final/pipeline.py
 | **Modelo Base y Ajuste (M1/M3)** | `Qwen/Qwen2.5-1.5B-Instruct` + LoRA (`r=16`, `alpha=32`, `dropout=0.05`, proyecciones `q/k/v/o_proj`, 4.35M parámetros entrenables = 0.2815 %) | *Full fine-tuning* o modelos > 7B | Sobre 1,040 ejemplos de entrenamiento (y 260 de validación), LoRA elevó el *Exact-Match* de `20.0 %` a `66.5 %` (y `F1` promedio de `0.688` a `0.752`), permitiendo alternar dinámicamente entre modo extractor (LoRA activo) y generador RAG (`disable_adapter()`) sin duplicar pesos en VRAM. |
 | **Recuperación y Reranking (M3)** | Recuperación Híbrida (`e5-small` + `BM25`) fusionada con RRF (`k=60`) + filtrado por metadatos + HyDE | Cross-encoder reranker adicional o búsqueda puramente densa | En la ablación de M3, añadir un cross-encoder degradó el cumplimiento (`D3` bajó de `0.833` a `0.667`) y sumó latencia; la fusión híbrida con HyDE equilibró coincidencias exactas de prendas (`BM25`) con intención semántica (`e5-small`). |
 | **Patrón Visual (M4)** | VLM generativo (`Qwen/Qwen2-VL-2B-Instruct`) como extractor semántico y guardrail de dominio hacia el puente textual | Embeddings imagen-texto directos (`CLIP ViT-B/32`) | El catálogo (`800` outfits) contiene descripciones detalladas en español pero no fotografías propias; CLIP tiene alineación débil en español y carece de razonamiento para rechazar imágenes fuera de dominio con la válvula de escape. |
-| **Técnica de Eficiencia (M5)** | Cuantización `int4` NF4 (`bitsandbytes`) + atención `SDPA` + HyDE estructurado determinista + caché LRU | Destilación a `Qwen2.5-0.5B` o mantener FP16 sin optimizar | `int4` redujo la VRAM máxima en **74.14 %** (`12.45 GB` $\rightarrow$ `3.22 GB`), permitiendo desplegar en hardware restringido. Se descartó bajar a `0.5B` porque degrada el seguimiento estricto de citación de IDs y reglas negativas. |
+| **Técnica de Eficiencia (M5)** | Cuantización `int4` NF4 (`bitsandbytes`) con atención `SDPA`, medida sobre el generador; en el despliegue se complementa con HyDE estructurado determinista y caché LRU | Destilación a `Qwen2.5-0.5B` o mantener FP16 sin optimizar | `int4` redujo la VRAM máxima en **74.14 %** (`12.45 GB` $\rightarrow$ `3.22 GB`), permitiendo desplegar en hardware restringido. Se descartó bajar a `0.5B` porque degrada el seguimiento estricto de citación de IDs y reglas negativas. *Nota: `int4` + `SDPA` se midieron en el notebook de evaluación sobre T4; el Space corre en ZeroGPU, que no admite `bitsandbytes`, por lo que allí el generador se sirve en bfloat16 (HyDE estructurado y caché LRU sí operan en el despliegue). Ver sección 5.* |
 
 ---
 
@@ -84,10 +84,12 @@ Todas las etapas integradas (`M2` a `M5`) se evaluaron bajo la misma vara del ha
 | **M1 · Extractor LoRA (solo JSON)** | 260 val (`1,300` sintéticos) | `F1 = 0.752` (`EM = 66.5 %` vs `20.0 %` zero-shot) | No aplica | — |
 | **M2 · Línea Base sin RAG** | 12 casos texto (`eval_set_rag`) | `D1 = 0.167` · `D2 = 4.750` · `D3 = 0.750` | No aplica | `4.712 s` |
 | **M3 · RAG Híbrido + HyDE + Tool** | 12 casos texto (`eval_set_rag`) | `D1 = 0.833` · `D2 = 4.667` · `D3 = 0.833` *(sin tool)* / `0.750 · 4.000 · 0.667` *(con tool)* | No aplica | `13.539 s` / `12.134 s` |
-| **M4 · Multimodal Integrado (FP16)** | 18 casos (`12` texto + `6` imagen) | `D1 = 0.833` · `D2 = 3.889` · `D3 = 0.722` *(juez externo)* | Sí (`D1=0.833`, `D2=3.833`, `D3=0.667`) | `10.476 s` (`9.875 s` texto / `15.932 s` img) |
-| **M5 · Final Optimizado (`int4` NF4)** | 18 casos (`12` texto + `6` imagen) | `D1 = 0.750` · `D2 = 3.611` · `D3 = 0.611` *(juez externo)* | Sí (incluidos en los 18 casos) | `11.375 s` (`< 0.01 s` en *cache hit*) |
+| **M4 · Multimodal Integrado (FP16)** | 18 casos (`12` texto + `6` con imagen) | `D1 = 0.833` · `D2 = 3.889` · `D3 = 0.722` *(juez externo)* | Sí (`D1=0.833`, `D2=3.833`, `D3=0.667` sobre los 6 casos con imagen) | `10.476 s` (`9.875 s` texto / `15.932 s` img) |
+| **M5 · Final Optimizado (`int4` NF4)** | 18 casos (`12` texto + `6` con imagen) | `D1 = 0.750` · `D2 = 3.611` · `D3 = 0.611` *(juez externo)* | Sí (incluidos en los 18 casos) | `11.375 s` (`< 0.01 s` en *cache hit*) |
 
-*(Nota metodológica: A partir de M4 se reemplazó el juez interno Qwen por un juez externo de familia distinta para eliminar el sesgo de auto-preferencia).*
+*Los 18 casos del eval set se componen de 10 consultas de texto en catálogo + 2 de texto fuera de catálogo (válvula) + 4 de recomendación con imagen + 2 adversariales con imagen = **6 casos con imagen** en total.*
+
+*(Nota metodológica: las filas M2 y M3 se evaluaron con el juez interno (Qwen local); a partir de M4 se adoptó un juez externo de familia distinta (`gemma-2-2b-it`) para eliminar el sesgo de auto-preferencia. Por eso la columna `D2` es estrictamente comparable dentro de cada bloque (M2–M3 entre sí, y M4–M5 entre sí), pero no entre ambos bloques, al provenir de jueces distintos; `D1` y `D3`, que no dependen del juez, sí son comparables en toda la tabla.)*
 
 ---
 
@@ -103,6 +105,18 @@ Antes de ejecutar la optimización definimos el umbral de aceptación: **"acepta
 | **Antes — M4 Completo (FP16 sin optimizar)** | `0.833` / `3.889` / `0.722` | `10.476 s` | `16.837 s` | `12.45 GB` |
 | **Después — M5 Optimizado (`int4` NF4 + SDPA + HyDE estructurado)** | `0.750` / `3.611` / `0.611` | `11.375 s` | `16.319 s` | `3.22 GB` |
 | **Variación relativa (`M4` $\rightarrow$ `M5`)** | `-9.96 %` / `-7.15 %` / `-15.37 %` | `+8.58 %` | `-3.08 %` | **`-74.14 %` (`-9.23 GB`)** |
+
+> **Qué se mide aquí y qué se despliega (nota de honestidad).** La tabla anterior mide la técnica de
+> eficiencia (4-bit NF4) en la **misma máquina** (NVIDIA T4) sobre el eval set completo, en
+> `final/05_evaluacion_m5.ipynb`. El **Space público corre en Hugging Face ZeroGPU**, donde
+> `bitsandbytes` (y por tanto la cuantización NF4) **no está soportado**; por eso el generador se
+> sirve allí en **bfloat16**. Es decir: la cuantización 4-bit es la técnica medida y justificada, y
+> el despliegue usa bfloat16 como fallback obligado por la plataforma. Esto es lo que el enunciado
+> contempla al pedir decir "qué quedó afuera y por qué" cuando el sistema no cabe tal cual en el
+> hardware gratuito. La medición 4-bit de esta tabla se obtuvo instanciando el pipeline con la
+> cuantización NF4 activada sobre la T4 del notebook de evaluación (`health_check` reportó
+> `quantization_4bit: True`, `vram_max_gb ≈ 3.0`); la versión servida en el Space se instancia en
+> bfloat16, que es lo que ZeroGPU admite.
 
 **Lectura honesta del resultado:**
 * **Se cumplió** el objetivo de memoria (`3.22 GB < 4.0 GB`, ahorro de `9.23 GB`), la tolerancia en calidad (`-0.278` en `D2` $\le 0.30$) y la reducción de cola de latencia (`p95 = 16.319 s < 16.837 s`).
@@ -151,8 +165,13 @@ Realizamos ablaciones sistemáticas en M1 y M3 para validar cada componente ante
 ## 8. Despliegue, Health Check y Observabilidad
 
 * **Interfaz y URL pública (`final/app.py`):** Desplegada en Hugging Face Spaces con Gradio en dos pestañas: *Asistente Personal Shopper* (texto + imagen opcional + traza JSON de M1/M4/M3) y *Health Check & Observabilidad*.
-* **Health Check (`PersonalShopperOptimizado.health_check()`):** Verifica sin ejecutar inferencia que el índice vectorial Chroma tenga los 800 outfits cargados, el dispositivo activo (`cuda`/`cpu`), el estado de cuantización (`quantization_4bit`), la carga del adaptador LoRA (`lora_loaded`) y la memoria VRAM pico.
+* **Health Check (`PersonalShopperOptimizado.health_check()`):** Verifica sin ejecutar inferencia que el índice vectorial Chroma tenga los 800 outfits cargados (`status: healthy/degraded`), el dispositivo activo, la precisión del generador servido (`precision: bfloat16` en ZeroGPU), la carga del adaptador LoRA (`lora_loaded`) y la memoria VRAM pico (`vram_max_gb`). En el notebook de evaluación sobre T4, el mismo health check reporta `quantization_4bit: True` al instanciar con la cuantización activada.
 * **Logging estructurado sin PII (`final/observability.py`):** Cada petición escribe una línea JSON en `final/resultados/logs_observabilidad.jsonl` y sincroniza métricas en tiempo real con **Weights & Biases (`wandb`)** (`inferencia/latencia_s`, `inferencia/uso_herramienta`, `inferencia/valvula_activada`, `inferencia/cache_hit`, `inferencia/error`). Ningún texto crudo ni imagen se persiste: las consultas se anonimizan mediante `SHA-256` truncado a 12 caracteres (`query_hash`).
+* **Evidencia del dashboard de W&B (proyecto privado):** el proyecto W&B es privado, por lo que no se comparte un enlace público; en su lugar se incluye la captura del dashboard de producción, con los paneles de eventos operativos por consulta, activación de la válvula de escape (OOD), uso de filtros estructurados (M3), SLA de latencia (p50 vs. p95) y latencia por petición:
+
+  ![Dashboard de observabilidad en W&B](resultados/wandb_dashboard.png)
+
+  *(Captura del proyecto `personal-shopper-moda` en W&B, grupo de ejecución `hf-spaces-prod`.)*
 
 ---
 
@@ -161,7 +180,7 @@ Realizamos ablaciones sistemáticas en M1 y M3 para validar cada componente ante
 * **Dónde NO creerle al sistema:**
   * **Disponibilidad de stock en tiempo real, precios, tallas numéricas (36, 38, M, L) y envíos:** El catálogo indexado contiene únicamente descripciones estilísticas de outfits (`corpus_look_es.csv`); cualquier consulta comercial debe ser rechazada por la válvula de escape.
   * **Imágenes ambiguas o no relacionadas con ropa en modo 4-bit:** Como evidenció la evaluación de M5, el VLM cuantizado puede intentar interpretar gráficos abstractos como estampados textiles si no se acompaña de un filtro previo de categoría.
-  * **Hardware CPU gratuito en Hugging Face Spaces:** En tier gratuito sin GPU (`CPU Basic`), la inferencia de modelos de 1.5B–2B tarda decenas de segundos por petición fría (mitigado parcialmente mediante el caché LRU para consultas repetidas).
+  * **Hardware gratuito en Hugging Face Spaces (ZeroGPU):** el Space corre en ZeroGPU, que asigna GPU por petición solo dentro de funciones decoradas; la primera petición (carga perezosa de modelos) tarda decenas de segundos, mitigado parcialmente con el caché LRU para consultas repetidas. ZeroGPU no admite `bitsandbytes`, por lo que el generador se sirve en bfloat16 (la cuantización 4-bit se midió en el notebook de evaluación sobre T4; ver sección 5).
 * **Qué hace cuando no sabe:** Ante consultas administrativas/comerciales o imágenes detectadas como `es_moda: false`, el sistema corta la ejecución antes del RAG y responde explícitamente con la válvula de escape: *"No encuentro esa información en el catálogo"*.
 
 ---
